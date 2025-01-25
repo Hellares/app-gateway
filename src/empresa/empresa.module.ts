@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
-import { ProductsController } from './products.controller';
 import { RabbitMQModule } from 'src/transports/rabbitmq.module';
+import { EmpresaController } from './empresa.controller';
 
 @Module({
-  controllers: [ProductsController],
+  controllers: [EmpresaController],
   providers: [],
   imports: [ RabbitMQModule],
 })
-export class ProductsModule {}
+export class EmpresaModule {}

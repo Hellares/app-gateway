@@ -1,11 +1,15 @@
 export const SERVICES = {
+  REDIS: 'REDIS_SERVICE',
   PRODUCTS: 'PRODUCTS_SERVICE',
-  // ORDERS: 'ORDERS_SERVICE',
-  // AUTH: 'AUTH_SERVICE',
+  COMPANY: 'COMPANY_SERVICE',
+  RUBROS: 'RUBROS_SERVICE',
+  FILES: 'FILES_SERVICE',
 } as const;
 
 export const QUEUES = {
+  REDIS: 'redis_queue',
   PRODUCTS: 'products_queue',
-  // ORDERS: 'orders_queue',
-  // AUTH: 'auth_queue',
+  COMPANY: 'company_queue',
+  RUBROS: 'rubros_queue',
+  FILES: 'files_queue',
 } as const;

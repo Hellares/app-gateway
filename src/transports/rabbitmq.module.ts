@@ -8,18 +8,9 @@ import { QUEUES, SERVICES } from './constants';
 
 
 const serviceConfig = [
-  {
-    name: SERVICES.PRODUCTS,
-    queue: QUEUES.PRODUCTS
-  },
-  // {
-  //   name: SERVICES.ORDERS,
-  //   queue: QUEUES.ORDERS
-  // },
-  // {
-  //   name: SERVICES.AUTH,
-  //   queue: QUEUES.AUTH
-  // }
+  { name: SERVICES.COMPANY,queue: QUEUES.COMPANY },
+  { name: SERVICES.REDIS,queue: QUEUES.REDIS },
+  { name: SERVICES.FILES,queue: QUEUES.FILES },
 ];
 
 const clientsConfigArray = serviceConfig.map(service => ({
@@ -41,3 +32,4 @@ const clientsConfig = ClientsModule.register(clientsConfigArray);
   exports: [clientsConfig]
 })
 export class RabbitMQModule { }
+

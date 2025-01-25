@@ -17,9 +17,11 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
+
   app.useGlobalFilters(new RpcCustomExceptionFilter());
 
   await app.listen(envs.port);
-  logger.log(`${CONSOLE_COLORS.TEXT.CYAN }👾🐷🆗 Server started on port ${envs.port}`);
+  
+  logger.log(`${CONSOLE_COLORS.TEXT.MAGENTA }👾🐷🆗 Server started on port ${envs.port}`);
 }
 bootstrap();
