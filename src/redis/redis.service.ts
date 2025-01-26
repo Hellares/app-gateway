@@ -16,6 +16,8 @@ export class RedisService {
   private consecutiveFailures = 0;
   private readonly maxConsecutiveFailures = 3;
 
+  private localCache: Map<string, any> = new Map(); // Implementación de caché local
+
   constructor(
     @Inject(SERVICES.REDIS) private readonly cacheClient: ClientProxy,
   ) {}
@@ -83,6 +85,7 @@ export class RedisService {
     }
   }
 
+
   
   
   private async handleConnectionFailure(reason: string) {
@@ -146,42 +149,37 @@ export class RedisService {
     }
   }
 
-    async get<T>(key: string): Promise<CacheResponse<T>> {
+  
+  async get<T>(key: string): Promise<CacheResponse<T>> {
     try {
-      // Validar key antes de hacer la petición
       this.validateKey(key);
 
       if (!this.isConnected) {
-        this.logger.warn(`⚠️ Redis no disponible. Key: ${key}`);
-        return {
-          success: false,
-          error: 'Redis service is not available',
-          source: 'none'
-        };
+        this.logger.warn(`⚠️ Redis no disponible. Usando caché local para key: ${key}`);
+        if (this.localCache.has(key)) {
+          const data = this.localCache.get(key);
+          this.logger.debug(`🔄 Caché local utilizado. Datos: ${JSON.stringify(data)}`);
+          return { success: true, source: 'local', data };
+        } else {
+          this.logger.warn(`❌ Key no encontrada en caché local: ${key}`);
+          return { success: false, source: 'local', error: 'Key not found in local cache' };
+        }
       }
 
       this.logger.debug(`📤 Solicitando caché para key: ${key}`);
-    const response = await firstValueFrom(
-      this.cacheClient.send({ cmd: 'cache.get' }, key).pipe(
-        timeout(this.timeoutMs),
-        catchError(error => {
-          this.logger.error(`❌ Error en caché para key ${key}:`, error);
-          throw error;
-        })
-      )
-    );
+      const response = await firstValueFrom(
+        this.cacheClient.send({ cmd: 'cache.get' }, key).pipe(
+          timeout(this.timeoutMs),
+          catchError(error => {
+            this.logger.error(`❌ Error en caché para key ${key}:`, error);
+            throw error;
+          })
+        )
+      );
 
       this.logger.debug(`📥 Respuesta de caché para key ${key}: ${response.success ? 'hit' : 'miss'} (${response.source})`);
       return response;
     } catch (error) {
-      if (error.message.includes('key')) {
-        // Error de validación
-        return {
-          success: false,
-          error: error.message,
-          source: 'none'
-        };
-      }
       return {
         success: false,
         error: 'Error al obtener caché',
@@ -190,39 +188,36 @@ export class RedisService {
     }
   }
 
+ 
   async set<T>(key: string, value: T, ttl?: number): Promise<CacheResponse> {
     try {
       this.validateKey(key);
       
       if (!this.isConnected) {
-        this.logger.warn(`⚠️ Redis no disponible al intentar establecer key: ${key}`);
-        return {
-          success: false,
-          error: 'Redis service is not available',
-          source: 'none'
-        };
-      }
-
-      // Validar el valor
-      if (value === undefined || value === null) {
-        throw new Error('El valor no puede ser null o undefined');
-      }
-
-      // Validar TTL
-      if (ttl !== undefined && ttl <= 0 && ttl !== -1) {
-        throw new Error('TTL debe ser positivo o -1 para sin expiración');
+        this.logger.warn(`⚠️ Redis no disponible. Guardando en caché local para key: ${key}`);
+        this.localCache.set(key, value);
+        this.logger.debug(`✅ Caché local actualizado para key: ${key}`);
+        return { success: true, source: 'local' };
       }
 
       this.logger.debug(`📤 Estableciendo caché para key: ${key} (TTL: ${ttl || 'default'})`);
-    return await firstValueFrom(
-      this.cacheClient.send({ cmd: 'cache.set' }, { key, value, ttl }).pipe(
-        timeout(this.timeoutMs),
-        catchError(error => {
-          this.logger.error(`❌ Error estableciendo caché para key ${key}:`, error);
-          throw error;
-        })
-      )
-    );
+      const response = await firstValueFrom(
+        this.cacheClient.send({ cmd: 'cache.set' }, { key, value, ttl }).pipe(
+          timeout(this.timeoutMs),
+          catchError(error => {
+            this.logger.error(`❌ Error estableciendo caché para key ${key}:`, error);
+            throw error;
+          })
+        )
+      );
+
+      // Eliminar la key correspondiente en el caché local tras actualizar en Redis
+      if (this.localCache.has(key)) {
+        this.localCache.delete(key);
+        this.logger.debug(`🧹 Key eliminada del caché local tras actualizar en Redis: ${key}`);
+      }
+
+      return response;
     } catch (error) {
       return {
         success: false,
@@ -230,6 +225,11 @@ export class RedisService {
         source: 'none'
       };
     }
+  }
+
+  async clearLocalCache(): Promise<void> {
+    this.localCache.clear();
+    this.logger.log('🧹 Caché local limpiado');
   }
   
 
@@ -262,11 +262,12 @@ export class RedisService {
     }
   }
 
+ 
   async clearAll(): Promise<CacheResponse> {
     try {
+      await this.clearLocalCache();
       return await firstValueFrom(
-        this.cacheClient.send({ cmd: 'cache.clear' }, {})
-          .pipe(timeout(this.timeoutMs))
+        this.cacheClient.send({ cmd: 'cache.clear' }, {}).pipe(timeout(this.timeoutMs))
       );
     } catch (error) {
       this.logger.warn('Error clearing cache:', error);
