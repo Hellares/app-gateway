@@ -12,7 +12,7 @@ export class RedisService {
   private isConnected = false;
   private connectionCheckInterval: NodeJS.Timeout;
   private reconnectionTimeout: NodeJS.Timeout | null = null;
-  private readonly reconnectionInterval = 5000;  // 5 segundos
+  private readonly reconnectionInterval = 2000;  //! 2 segundos para reconectar
   private consecutiveFailures = 0;
   private readonly maxConsecutiveFailures = 3;
 
@@ -60,7 +60,7 @@ export class RedisService {
     
     this.connectionCheckInterval = setInterval(async () => {
       await this.checkConnection();
-    }, 30000);
+    }, 10000); //! 10 segundos para verificar la conexión
   }
 
   private async checkConnection() {
@@ -68,10 +68,35 @@ export class RedisService {
       const health = await this.healthCheck();
       
       if (health.status === 'healthy') {
-        if (!this.isConnected) {
+        const wasDisconnected = !this.isConnected;
+        
+        if (wasDisconnected) {
           this.isConnected = true;
           this.consecutiveFailures = 0;
           this.logger.log('✅ Conexión establecida con el servicio Redis');
+          
+          // Limpiamos ambas cachés cuando Redis vuelve a estar disponible
+          try {
+            // Primero limpiamos la caché local
+            await this.clearLocalCache();
+            this.logger.log('🧹 Caché local limpiado después de reconexión');
+            
+            // Luego limpiamos Redis
+            const response = await firstValueFrom(
+              this.cacheClient.send({ cmd: 'cache.clear' }, {}).pipe(
+                timeout(this.timeoutMs)
+              )
+            );
+            
+            if (response.success) {
+              this.logger.log('🧹 Caché de Redis limpiado después de reconexión');
+            } else {
+              this.logger.warn('⚠️ No se pudo limpiar el caché de Redis después de reconexión');
+            }
+          } catch (error) {
+            this.logger.error('❌ Error al limpiar cachés después de reconexión:', error);
+          }
+          
           if (this.reconnectionTimeout) {
             clearTimeout(this.reconnectionTimeout);
             this.reconnectionTimeout = null;
@@ -83,7 +108,7 @@ export class RedisService {
     } catch (error) {
       await this.handleConnectionFailure(error.message);
     }
-  }
+}
 
 
   
@@ -127,7 +152,7 @@ export class RedisService {
           }
         }
       } catch (error) {
-        this.logger.warn('⚠️ Intento de reconexión fallido, reintentando en 5 segundos');
+        this.logger.warn('⚠️ Intento de reconexión fallido, reintentando en 2 segundos');
         this.reconnectionTimeout = setTimeout(attemptReconnect, this.reconnectionInterval);
       }
     };
@@ -195,6 +220,7 @@ export class RedisService {
       
       if (!this.isConnected) {
         this.logger.warn(`⚠️ Redis no disponible. Guardando en caché local para key: ${key}`);
+        await this.clearLocalCache();
         this.localCache.set(key, value);
         this.logger.debug(`✅ Caché local actualizado para key: ${key}`);
         return { success: true, source: 'local' };
@@ -233,21 +259,61 @@ export class RedisService {
   }
   
 
-  async delete(key: string): Promise<CacheResponse> {
-    try {
-      return await firstValueFrom(
-        this.cacheClient.send({ cmd: 'cache.delete' }, key)
-          .pipe(timeout(this.timeoutMs))
+  // Modificamos el método delete
+async delete(key: string): Promise<CacheResponse> {
+  try {
+      // Si la key termina en :*, es un patrón
+      const isPattern = key.endsWith(':*');
+      
+      // Si Redis no está disponible, solo limpiamos el caché local
+      if (!this.isConnected) {
+          if (isPattern) {
+              // Eliminamos el : final si existe
+              const pattern = key.endsWith(':') ? key.slice(0, -1) : key;
+              await this.clearLocalCacheByPattern(pattern);
+          } else {
+              this.localCache.delete(key);
+              this.logger.debug(`🧹 Key eliminada del caché local: ${key}`);
+          }
+          return {
+              success: true,
+              source: 'local'
+          };
+      }
+
+      // Intentamos eliminar en Redis
+      const response = await firstValueFrom(
+          this.cacheClient.send({ cmd: 'cache.delete' }, key)
+              .pipe(timeout(this.timeoutMs))
       );
-    } catch (error) {
+
+      // También limpiamos el caché local
+      if (isPattern) {
+          const pattern = key.endsWith(':') ? key.slice(0, -1) : key;
+          await this.clearLocalCacheByPattern(pattern);
+      } else {
+          this.localCache.delete(key);
+      }
+
+      return response;
+  } catch (error) {
       this.logger.warn(`Error deleting cache for key ${key}:`, error);
+      
+      // Si hay error, intentamos al menos limpiar el caché local
+      if (key.endsWith(':*')) {
+          const pattern = key.endsWith(':') ? key.slice(0, -1) : key;
+          await this.clearLocalCacheByPattern(pattern);
+      } else {
+          this.localCache.delete(key);
+      }
+      
       return {
-        success: false,
-        error: error.message || 'Failed to delete cache',
-        source: 'none'
+          success: false,
+          error: error.message || 'Failed to delete cache',
+          source: 'none'
       };
-    }
   }
+}
 
   async exists(key: string): Promise<boolean> {
     try {
@@ -332,4 +398,29 @@ export class RedisService {
       };
     }
   }
+
+  // Primero agregamos el método para limpiar caché local por patrón
+async clearLocalCacheByPattern(pattern: string): Promise<void> {
+  const keysToDelete: string[] = [];
+  
+  // Convertimos el patrón de Redis a una expresión regular
+  const regexPattern = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
+  
+  // Buscamos todas las keys que coincidan con el patrón
+  for (const key of this.localCache.keys()) {
+      if (regexPattern.test(key)) {
+          keysToDelete.push(key);
+      }
+  }
+  
+  // Eliminamos las keys encontradas
+  keysToDelete.forEach(key => {
+      this.localCache.delete(key);
+      this.logger.debug(`🧹 Key eliminada del caché local por patrón: ${key}`);
+  });
+  
+  if (keysToDelete.length > 0) {
+      this.logger.log(`🧹 Se eliminaron ${keysToDelete.length} keys del caché local usando el patrón: ${pattern}`);
+  }
+}
 }

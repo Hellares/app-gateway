@@ -12,10 +12,3 @@ export const CACHE_KEYS = {
   },
   // Otros módulos...
 } as const;
-
-// export const CACHE_TTL = {
-//   SHORT: 300,     // 5 minutos
-//   MEDIUM: 3600,   // 1 hora
-//   LONG: 86400,    // 1 día
-//   PERMANENT: -1   // Sin expiración
-// } as const;
