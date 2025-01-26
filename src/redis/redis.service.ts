@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
-import { catchError, firstValueFrom, timeout, TimeoutError } from 'rxjs';
+import { catchError, firstValueFrom, throwError, timeout, TimeoutError } from 'rxjs';
 import { CacheResponse } from './interfaces/cache-response.interface';
 import { SERVICES } from 'src/transports/constants';
 import { CONSOLE_COLORS } from 'src/common/constants/colors.constants';
@@ -81,20 +81,30 @@ export class RedisService {
             await this.clearLocalCache();
             this.logger.log('🧹 Caché local limpiado después de reconexión');
             
-            // Luego limpiamos Redis
+            // Luego limpiamos Redis de forma más robusta
             const response = await firstValueFrom(
               this.cacheClient.send({ cmd: 'cache.clear' }, {}).pipe(
-                timeout(this.timeoutMs)
+                timeout(this.timeoutMs),
+                catchError(error => {
+                  this.logger.error('Error al limpiar Redis:', error);
+                  return throwError(() => error);
+                })
               )
             );
             
             if (response.success) {
               this.logger.log('🧹 Caché de Redis limpiado después de reconexión');
             } else {
+              // Si no se pudo limpiar, vamos a intentar reconectar
               this.logger.warn('⚠️ No se pudo limpiar el caché de Redis después de reconexión');
+              this.isConnected = false;
+              await this.handleConnectionFailure('Fallo al limpiar caché de Redis');
             }
           } catch (error) {
             this.logger.error('❌ Error al limpiar cachés después de reconexión:', error);
+            // Si hay error al limpiar, también tratamos como fallo de conexión
+            this.isConnected = false;
+            await this.handleConnectionFailure('Error al limpiar cachés');
           }
           
           if (this.reconnectionTimeout) {
@@ -144,12 +154,36 @@ export class RedisService {
         
         if (health.status === 'healthy') {
           this.logger.log('✅ Reconexión exitosa');
-          this.isConnected = true;
-          this.consecutiveFailures = 0;
+          
+          // Asegurarnos de limpiar ambas cachés después de reconectar
+          try {
+            await this.clearLocalCache();
+            const response = await firstValueFrom(
+              this.cacheClient.send({ cmd: 'cache.clear' }, {}).pipe(
+                timeout(this.timeoutMs)
+              )
+            );
+            
+            if (response.success) {
+              this.isConnected = true;
+              this.consecutiveFailures = 0;
+              this.logger.log('🧹 Cachés limpiados después de reconexión');
+            } else {
+              throw new Error('No se pudo limpiar el caché de Redis');
+            }
+          } catch (error) {
+            this.logger.error('❌ Error al limpiar cachés en reconexión:', error);
+            // Programar nuevo intento
+            this.reconnectionTimeout = setTimeout(attemptReconnect, this.reconnectionInterval);
+            return;
+          }
+          
           if (this.reconnectionTimeout) {
             clearTimeout(this.reconnectionTimeout);
             this.reconnectionTimeout = null;
           }
+        } else {
+          throw new Error('Health check unhealthy después de reconexión');
         }
       } catch (error) {
         this.logger.warn('⚠️ Intento de reconexión fallido, reintentando en 2 segundos');
@@ -158,7 +192,7 @@ export class RedisService {
     };
 
     attemptReconnect();
-  }
+}
 
   
 
