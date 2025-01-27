@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, HttpStatus, Inject, Logger, Param, Post,
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { catchError, firstValueFrom, timeout, TimeoutError } from 'rxjs';
-import { CACHE_KEYS } from 'src/common/constants/redis-cache.keys.contants';
+import { CACHE_KEYS } from 'src/redis/constants/redis-cache.keys.contants';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { FileUrlHelper } from 'src/common/helpers/file-url.helper';
 import { FILE_CONFIG } from 'src/files/common/validator/file.validator';

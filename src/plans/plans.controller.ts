@@ -5,7 +5,7 @@ import { SERVICES } from 'src/transports/constants';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { catchError, firstValueFrom, timeout, TimeoutError } from 'rxjs';
 import { RedisService } from 'src/redis/redis.service';
-import { CACHE_KEYS } from 'src/common/constants/redis-cache.keys.contants';
+import { CACHE_KEYS } from 'src/redis/constants/redis-cache.keys.contants';
 
 
 @Controller('planes')

@@ -1,9 +1,10 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Get, Inject, Injectable, Logger } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 import { catchError, firstValueFrom, throwError, timeout, TimeoutError } from 'rxjs';
 import { CacheResponse } from './interfaces/cache-response.interface';
 import { SERVICES } from 'src/transports/constants';
 import { CONSOLE_COLORS } from 'src/common/constants/colors.constants';
+import { CacheMetrics } from './interfaces/cache-metrics.interface';
 
 @Injectable()
 export class RedisService {
@@ -15,12 +16,72 @@ export class RedisService {
   private readonly reconnectionInterval = 2000;  //! 2 segundos para reconectar
   private consecutiveFailures = 0;
   private readonly maxConsecutiveFailures = 3;
-
   private localCache: Map<string, any> = new Map(); // Implementación de caché local
+
+  private metrics: CacheMetrics = {
+    hits: 0,
+    misses: 0,
+    totalOperations: 0,
+    averageResponseTime: 0,
+    lastResponseTime: 0,
+    failedOperations: 0,
+    successRate: 100,
+    localCacheSize: 0,
+    lastUpdated: new Date(),
+    connectionStatus: {
+      isConnected: false,
+      consecutiveFailures: 0,
+      lastConnectionAttempt: new Date()
+    }
+  };
 
   constructor(
     @Inject(SERVICES.REDIS) private readonly cacheClient: ClientProxy,
   ) {}
+
+  async getMetrics(): Promise<CacheMetrics> {
+    return {
+      ...this.metrics,
+      localCacheSize: this.localCache.size,
+      successRate: this.calculateSuccessRate(),
+      lastUpdated: new Date(),
+      connectionStatus: {
+        isConnected: this.isConnected,
+        consecutiveFailures: this.consecutiveFailures,
+        lastConnectionAttempt: new Date()
+      }
+    };
+  }
+
+  private calculateSuccessRate(): number {
+    if (this.metrics.totalOperations === 0) return 100;
+    return Number(((this.metrics.totalOperations - this.metrics.failedOperations) / 
+      this.metrics.totalOperations * 100).toFixed(2));
+  }
+
+  private updateMetrics(operation: 'hit' | 'miss', responseTime: number, failed: boolean = false) {
+    this.metrics.totalOperations++;
+    this.metrics.lastResponseTime = responseTime;
+    
+    // Actualizar tiempo promedio de respuesta
+    this.metrics.averageResponseTime = Number(
+      ((this.metrics.averageResponseTime * (this.metrics.totalOperations - 1) + responseTime) / 
+      this.metrics.totalOperations).toFixed(2)
+    );
+
+    if (failed) {
+      this.metrics.failedOperations++;
+    }
+
+    if (operation === 'hit') {
+      this.metrics.hits++;
+    } else {
+      this.metrics.misses++;
+    }
+
+    this.metrics.lastUpdated = new Date();
+    this.metrics.localCacheSize = this.localCache.size;
+  }
 
   async onModuleInit() {
     try {
@@ -210,18 +271,42 @@ export class RedisService {
 
   
   async get<T>(key: string): Promise<CacheResponse<T>> {
+    const startTime = Date.now();
     try {
       this.validateKey(key);
 
       if (!this.isConnected) {
-        this.logger.warn(`⚠️ Redis no disponible. Usando caché local para key: ${key}`);
-        if (this.localCache.has(key)) {
+        const hasLocalCache = this.localCache.has(key);
+        this.updateMetrics(
+          hasLocalCache ? 'hit' : 'miss', 
+          Date.now() - startTime
+        );
+
+        if (hasLocalCache) {
           const data = this.localCache.get(key);
           this.logger.debug(`🔄 Caché local utilizado. Datos: ${JSON.stringify(data)}`);
-          return { success: true, source: 'local', data };
+          return { 
+            success: true, 
+            source: 'local', 
+            data,
+            details: {
+              responseTime: Date.now() - startTime,
+              cached: true,
+              lastCheck: new Date().toISOString()
+            }
+          };
         } else {
           this.logger.warn(`❌ Key no encontrada en caché local: ${key}`);
-          return { success: false, source: 'local', error: 'Key not found in local cache' };
+          return { 
+            success: false, 
+            source: 'local', 
+            error: 'Key not found in local cache',
+            details: {
+              responseTime: Date.now() - startTime,
+              cached: false,
+              lastCheck: new Date().toISOString()
+            }
+          };
         }
       }
 
@@ -236,28 +321,65 @@ export class RedisService {
         )
       );
 
+      const operationTime = Date.now() - startTime;
+      this.updateMetrics(
+        response.success ? 'hit' : 'miss',
+        operationTime
+      );
+
       this.logger.debug(`📥 Respuesta de caché para key ${key}: ${response.success ? 'hit' : 'miss'} (${response.source})`);
-      return response;
+      return {
+        ...response,
+        details: {
+          ...response.details,
+          responseTime: operationTime,
+          lastCheck: new Date().toISOString()
+        }
+      };
     } catch (error) {
+      const operationTime = Date.now() - startTime;
+      this.updateMetrics('miss', operationTime, true);
+      
       return {
         success: false,
         error: 'Error al obtener caché',
-        source: 'none'
+        source: 'none',
+        details: {
+          responseTime: operationTime,
+          cached: false,
+          lastCheck: new Date().toISOString(),
+          lastError: error.message
+        }
       };
     }
   }
 
- 
+
   async set<T>(key: string, value: T, ttl?: number): Promise<CacheResponse> {
     try {
       this.validateKey(key);
       
       if (!this.isConnected) {
         this.logger.warn(`⚠️ Redis no disponible. Guardando en caché local para key: ${key}`);
-        await this.clearLocalCache();
+        
+        // Guardamos manteniendo las entradas existentes
         this.localCache.set(key, value);
-        this.logger.debug(`✅ Caché local actualizado para key: ${key}`);
-        return { success: true, source: 'local' };
+        this.logger.debug(`✅ Caché local actualizado para key: ${key}, total entradas: ${this.localCache.size}`);
+        
+        return { 
+          success: true, 
+          source: 'local',
+          details: {
+            cached: true,
+            lastCheck: new Date().toISOString(),
+            cacheSize: this.localCache.size,
+            key: key,
+            localCacheInfo: {
+              size: this.localCache.size,
+              keys: Array.from(this.localCache.keys())
+            }
+          }
+        };
       }
 
       this.logger.debug(`📤 Estableciendo caché para key: ${key} (TTL: ${ttl || 'default'})`);
@@ -271,21 +393,35 @@ export class RedisService {
         )
       );
 
-      // Eliminar la key correspondiente en el caché local tras actualizar en Redis
+      // Solo eliminamos la key específica si existe
       if (this.localCache.has(key)) {
         this.localCache.delete(key);
-        this.logger.debug(`🧹 Key eliminada del caché local tras actualizar en Redis: ${key}`);
+        this.logger.debug(`🧹 Key específica eliminada del caché local: ${key}`);
       }
 
-      return response;
+      return {
+        ...response,
+        details: {
+          ...response.details,
+          lastCheck: new Date().toISOString(),
+          cacheSize: this.localCache.size,
+          key: key
+        }
+      };
     } catch (error) {
       return {
         success: false,
         error: error.message || 'Error al establecer caché',
-        source: 'none'
+        source: 'none',
+        details: {
+          lastError: error.message,
+          lastCheck: new Date().toISOString(),
+          cacheSize: this.localCache.size,
+          key: key
+        }
       };
     }
-  }
+}
 
   async clearLocalCache(): Promise<void> {
     this.localCache.clear();
@@ -456,5 +592,9 @@ async clearLocalCacheByPattern(pattern: string): Promise<void> {
   if (keysToDelete.length > 0) {
       this.logger.log(`🧹 Se eliminaron ${keysToDelete.length} keys del caché local usando el patrón: ${pattern}`);
   }
+}
+
+getLocalCache(): Map<string, any> {
+  return this.localCache;
 }
 }

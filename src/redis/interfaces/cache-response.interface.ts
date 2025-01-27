@@ -1,12 +1,4 @@
 export type CacheSource = 'redis' | 'local' | 'none';
-
-// export interface CacheResponse<T = any> {
-//   success: boolean;
-//   data?: T;
-//   error?: string;
-//   source: CacheSource;
-// }
-
 export interface CacheResponse<T = unknown> {
   success: boolean;
   source: CacheSource;
@@ -20,5 +12,11 @@ export interface CacheResponse<T = unknown> {
     consecutiveFailures?: number;
     lastError?: string;
     lastSuccessful?: string;
+    cacheSize?: number;        // Añadimos esta propiedad
+    key?: string;             // Añadimos esta propiedad
+    localCacheInfo?: {        // Información adicional del caché local
+      size: number;
+      keys: string[];
+    };
   };
 }
