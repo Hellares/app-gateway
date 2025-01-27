@@ -4,7 +4,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { catchError, firstValueFrom, timeout, TimeoutError } from 'rxjs';
 import { CACHE_KEYS } from 'src/redis/constants/redis-cache.keys.contants';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
-import { FileUrlHelper } from 'src/common/helpers/file-url.helper';
+import { FileUrlHelper } from 'src/files/common/helpers/file-url.helper';
 import { FILE_CONFIG } from 'src/files/common/validator/file.validator';
 import { RedisService } from 'src/redis/redis.service';
 import { CreateRubroDto } from './dto/create-rubro.dto';

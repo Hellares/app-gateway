@@ -64,10 +64,13 @@ export class RedisService {
     this.metrics.lastResponseTime = responseTime;
     
     // Actualizar tiempo promedio de respuesta
-    this.metrics.averageResponseTime = Number(
-      ((this.metrics.averageResponseTime * (this.metrics.totalOperations - 1) + responseTime) / 
-      this.metrics.totalOperations).toFixed(2)
-    );
+    // this.metrics.averageResponseTime = Number(
+    //   ((this.metrics.averageResponseTime * (this.metrics.totalOperations - 1) + responseTime) / 
+    //   this.metrics.totalOperations).toFixed(2)
+    // );
+    this.metrics.averageResponseTime =
+  (this.metrics.averageResponseTime * (this.metrics.totalOperations - 1) + responseTime) /
+  this.metrics.totalOperations;
 
     if (failed) {
       this.metrics.failedOperations++;
