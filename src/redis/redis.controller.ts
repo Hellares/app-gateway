@@ -2,23 +2,48 @@ import { Controller, Get, Logger, Post } from '@nestjs/common';
 import { RedisService } from './redis.service';
 import { CacheMetrics } from './interfaces/cache-metrics.interface';
 
+
 @Controller('redis')
 export class RedisController {
   private readonly logger = new Logger('RedisController');
   constructor(private readonly redisService: RedisService) {}
 
+  
+
+  @Get('health')
+async checkHealth() {
+  this.logger.log('🔍 Verificando estado de Redis...');
+  const health = await this.redisService.healthCheck();
+  
+  if (health.status === 'healthy') {
+    this.logger.log('✅ Redis está funcionando correctamente', {
+      responseTime: `${health.responseTime}ms`,
+      successRate: `${health.metrics?.online.successRate}%`
+    });
+  } else {
+    const offlineTime = health.timeOfflineFormatted || 'tiempo desconocido';
+    this.logger.warn(`⚠️ Redis no está saludable - Offline por ${offlineTime}`, {
+      failures: health.consecutiveFailures,
+      nextRetry: health.nextRetryIn ? `${health.nextRetryIn}ms` : 'N/A'
+    });
+  }
+  
+  return health;
+}
+
   @Get('metrics')
-  async getMetrics() {
+  async getMetricsCache() {
     this.logger.debug('🔍 Obteniendo métricas de Redis');
     const metrics = await this.redisService.getMetrics();
     
     // Añadir alertas basadas en métricas
-    if (metrics.successRate < 90) {
-      this.logger.warn(`⚠️ Tasa de éxito baja: ${metrics.successRate}%`);
+    if (!metrics.connectionStatus.isConnected) {
+      this.logger.warn(`⚠️ Redis offline por ${metrics.timeOffline || 'tiempo desconocido'}`);
+      this.logger.verbose(`ℹ️ Usando caché local con ${metrics.localCacheSize} entradas`);
     }
     
-    if (metrics.averageResponseTime > 100) {
-      this.logger.warn(`⚠️ Tiempo de respuesta promedio alto: ${metrics.averageResponseTime}ms`);
+    if (metrics.online.successRate < 90) {
+      this.logger.warn(`⚠️ Tasa de éxito baja en modo online: ${metrics.online.successRate}%`);
     }
     
     if (metrics.connectionStatus.consecutiveFailures > 0) {
@@ -33,46 +58,24 @@ export class RedisController {
   }
 
   private getHealthStatus(metrics: CacheMetrics): string {
-    if (!metrics.connectionStatus.isConnected) return 'disconnected';
-    if (metrics.successRate < 90) return 'degraded';
-    if (metrics.averageResponseTime > 100) return 'slow';
+    if (!metrics.connectionStatus.isConnected) {
+      return `disconnected (${metrics.timeOffline ? 'offline por ' + this.formatTime(metrics.timeOffline) : 'tiempo desconocido'})`;
+    }
+    if (metrics.online.successRate < 90) return 'degraded';
+    if (metrics.online.averageResponseTime > 100) return 'slow';
     return 'healthy';
   }
 
-  @Get('debug/cache')
-  async getLocalCacheContent() {
-    const cacheContent = {};
-    for (const [key, value] of this.redisService.getLocalCache().entries()) {
-      cacheContent[key] = {
-        dataLength: Array.isArray(value?.data) ? value.data.length : 'N/A',
-        metadata: value?.metadata || {},
-        timestamp: new Date().toISOString()
-      };
-    }
+  private formatTime(ms: number): string {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
 
-    return {
-      status: 'success',
-      cacheSize: this.redisService.getLocalCache().size,
-      keys: Object.keys(cacheContent),
-      details: cacheContent
-    };
+    if (hours > 0) return `${hours}h ${minutes % 60}m`;
+    if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+    return `${seconds}s`;
   }
 
-
-
-  @Get('health')
-  async checkHealth() {
-    this.logger.log('🔍 Verificando estado de Redis...');
-    const health = await this.redisService.healthCheck();
-    
-    if (health.status === 'healthy') {
-      this.logger.log('✅ Redis está funcionando correctamente');
-    } else {
-      this.logger.warn(`⚠️ Redis no está saludable: ${health.error || 'Unknown error'}`);
-    }
-    
-    return health;
-  }
 
   @Post('clear')
   async clearCache() {
@@ -87,4 +90,45 @@ export class RedisController {
     
     return result;
   }
+
+  @Get('debug/cache')
+async getLocalCacheContent() {
+  const cacheContent = {};
+  const localCache = this.redisService.getLocalCache();
+  
+  for (const [key, value] of localCache.entries()) {
+    cacheContent[key] = {
+      dataLength: Array.isArray(value?.data) ? value.data.length : 'N/A',
+      metadata: value?.metadata || {},
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  return {
+    status: 'success',
+    cacheSize: localCache.size,
+    keys: Object.keys(cacheContent),
+    details: cacheContent,
+    metrics: await this.redisService.getMetrics()
+  };
+}
+
+// @Post('debug/cache/clear')
+// async clearLocalCache() {
+//   await this.redisService.clearLocalCache();
+//   return {
+//     status: 'success',
+//     message: 'Caché local limpiado',
+//     timestamp: new Date().toISOString()
+//   };
+// }
+
+@Get('debug/cache/stats')
+async getLocalCacheStats() {
+  return {
+    status: 'success',
+    ...this.redisService.getLocalCacheDetails(),
+    metrics: await this.redisService.getMetrics()
+  };
+}
 }
