@@ -119,8 +119,7 @@ export class RubroController {
         )
       );
 
-      // Invalidar cachés después de crear
-      await this.invalidateAllCaches();
+    await this.updateLocalCache();
 
       return result;
     } catch (error) {
@@ -134,9 +133,22 @@ export class RubroController {
     }
   }
 
+  private async updateLocalCache() {
+    // Limpiar la caché local
+    await this.redisService.clearAll();
+  
+    // // Actualizar la caché local con el nuevo rubro
+    // await this.redisService.set(
+    //   CACHE_KEYS.RUBRO.PAGINATED(1, 10),
+    //   [rubro],
+    //   this.CACHE_CONFIG.ttl.list
+    // );
+  }
+
   @Get()
 async findAllRubros(@Query() paginationDto: PaginationDto) {
   try {
+    
     const { page = 1, limit = 10 } = paginationDto;
     const cacheKey = CACHE_KEYS.RUBRO.PAGINATED(page, limit);
 
@@ -332,7 +344,7 @@ async findDeletedRubros(@Query() paginationDto: PaginationDto) {
         // Invalidar cachés paginados
         ...Array.from(
           { length: this.CACHE_CONFIG.invalidation.maxPaginationCache }, 
-          (_, i) => this.redisService.delete(CACHE_KEYS.RUBRO.PAGINATED(i + 1, 10))
+          (_, i) => this.redisService.delete(CACHE_KEYS.RUBRO.PAGINATED(i + 1, 20))
         )
       ];
 
@@ -343,4 +355,6 @@ async findDeletedRubros(@Query() paginationDto: PaginationDto) {
       this.logger.error('Error en invalidación de caché:', error);
     }
   }
+
+  
 }

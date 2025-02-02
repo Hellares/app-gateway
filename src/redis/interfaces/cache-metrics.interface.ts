@@ -30,6 +30,31 @@ export interface CacheMetrics {
     consecutiveFailures: number;
     lastConnectionAttempt: Date;
   };
+  
+}
+
+export interface DetailedCacheMetrics extends CacheMetrics {
+  localCache: {
+    size: number;
+    maxSize: number;
+    usagePercentage: number;
+    oldestEntry: number | null;
+    newestEntry: number | null;
+    hitRatio: number;
+    averageHits: number;
+    totalHits: number;
+    memoryUsageEstimate: number;
+    patterns: Record<string, number>;
+  };
+  entries: Array<{
+    key: string;
+    hits: number;
+    age: number;
+    size: number;
+    expiresIn?: number;
+    pattern: string;
+    metadata?: any;
+  }>;
 }
 
 

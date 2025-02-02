@@ -3,7 +3,7 @@ import { Get, Inject, Injectable, Logger } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 import { catchError, firstValueFrom, timeout, TimeoutError } from 'rxjs';
 import { CacheResponse } from './interfaces/cache-response.interface';
-import { CacheMetrics, ServiceMetrics } from './interfaces/cache-metrics.interface';
+import { CacheMetrics, DetailedCacheMetrics, ServiceMetrics } from './interfaces/cache-metrics.interface';
 import { SERVICES } from 'src/transports/constants';
 import { 
   REDIS_GATEWAY_CONFIG, 
@@ -13,6 +13,9 @@ import {
 } from './config/redis.constants';
 import { LocalCacheEntry } from './interfaces/local-cache.interface';
 import { HealthCheckResponse } from './interfaces/health-check.interface';
+import { CACHE_KEYS } from './constants/redis-cache.keys.contants';
+
+
 
 @Injectable()
 export class RedisService {
@@ -45,9 +48,12 @@ export class RedisService {
       isConnected: false,
       consecutiveFailures: 0,
       lastConnectionAttempt: new Date()
-    }
+    },
   };
 
+  
+
+  
   constructor(
     @Inject(SERVICES.REDIS) private readonly cacheClient: ClientProxy,
   ) {}
@@ -71,27 +77,30 @@ export class RedisService {
       averageResponseTime: 0,
       lastResponseTime: 0,
       failedOperations: 0,
-      successRate: 100
+      successRate: 100,
     };
+
   }
+
 
   private async initializeService() {
     try {
       this.logger.log('🔄 Iniciando servicio Redis...');
       this.serviceState = REDIS_SERVICE_STATE.CONNECTING;
-      
+  
       await this.cacheClient.connect();
       const healthCheck = await this.healthCheck();
-      await this.startConnectionMonitoring();
-      
-      if (healthCheck.status === 'healthy') {
-        this.serviceState = REDIS_SERVICE_STATE.CONNECTED;
-        this.consecutiveFailures = 0;
-        this.lastOnlineTime = new Date();
-        this.logger.log('✅ Servicio Redis inicializado correctamente');
-      } else {
-        throw new Error('Health check inicial fallido');
-      }
+      await this.checkConnectionLoop();
+  
+      if (healthCheck.status !== 'healthy') throw new Error('Health check inicial fallido');
+  
+      Object.assign(this, {
+        serviceState: REDIS_SERVICE_STATE.CONNECTED,
+        consecutiveFailures: 0,
+        lastOnlineTime: new Date()
+      });
+  
+      this.logger.log('✅ Servicio Redis inicializado correctamente');
     } catch (error) {
       this.serviceState = REDIS_SERVICE_STATE.ERROR;
       this.logger.error('❌ Error inicializando el servicio Redis:', error);
@@ -220,22 +229,24 @@ export class RedisService {
         this.cacheClient.send(
           { cmd: REDIS_GATEWAY_CONFIG.COMMANDS.HEALTH }, 
           {}
-        ).pipe(
-          timeout(REDIS_GATEWAY_CONFIG.HEALTH_CHECK.TIMEOUT)
-        )
+        ).pipe(timeout(REDIS_GATEWAY_CONFIG.HEALTH_CHECK.TIMEOUT))
       );
   
-      if (response.status === 'healthy') {
-        if (this.serviceState !== REDIS_SERVICE_STATE.CONNECTED) {
-          this.logger.log('✅ Conexión con Redis restablecida');
-          await this.handleReconnection();
-        }
-        this.serviceState = REDIS_SERVICE_STATE.CONNECTED;
-        this.lastOnlineTime = new Date();
-        this.consecutiveFailures = 0;
-      } else {
+      if (response.status !== 'healthy') {
         throw new Error('Health check indica estado unhealthy');
       }
+  
+      if (this.serviceState !== REDIS_SERVICE_STATE.CONNECTED) {
+        this.logger.log('✅ Conexión con Redis restablecida');
+        await this.handleReconnection();
+      }
+  
+      Object.assign(this, {
+        serviceState: REDIS_SERVICE_STATE.CONNECTED,
+        lastOnlineTime: new Date(),
+        consecutiveFailures: 0
+      });
+  
     } catch (error) {
       await this.handleConnectionFailure(error);
     }
@@ -319,36 +330,21 @@ export class RedisService {
     }
   }
 
-  private updateMetrics(operation: 'hit' | 'miss', responseTime: number, failed: boolean = false) {
+  private updateMetrics(operation: 'hit' | 'miss', responseTime: number, failed = false) {
     if (responseTime <= 0) return;
-
-    // Actualizar métricas específicas (online/offline)
-    const currentMetrics = this.serviceState === REDIS_SERVICE_STATE.CONNECTED ? 
-      this.onlineMetrics : 
-      this.offlineMetrics;
-
-    currentMetrics.totalOperations++;
-    currentMetrics.lastResponseTime = responseTime;
-    currentMetrics.averageResponseTime = Number(
-      ((currentMetrics.averageResponseTime * (currentMetrics.totalOperations - 1) + responseTime) / 
-      currentMetrics.totalOperations).toFixed(2)
-    );
-
-    if (failed) {
-      currentMetrics.failedOperations++;
-    }
-
-    if (operation === 'hit') {
-      currentMetrics.hits++;
-    } else {
-      currentMetrics.misses++;
-    }
-
-    currentMetrics.successRate = this.calculateSuccessRate(currentMetrics);
-
-    // Actualizar métricas globales para mantener compatibilidad
-    this.metrics = {
-      ...this.metrics,
+  
+    const metrics = this.serviceState === REDIS_SERVICE_STATE.CONNECTED ? this.onlineMetrics : this.offlineMetrics;
+    metrics.totalOperations++;
+    metrics.lastResponseTime = responseTime;
+    metrics.averageResponseTime = 
+      ((metrics.averageResponseTime * (metrics.totalOperations - 1)) + responseTime) / metrics.totalOperations;
+  
+    if (failed) metrics.failedOperations++;
+    metrics[operation === 'hit' ? 'hits' : 'misses']++;
+  
+    metrics.successRate = this.calculateSuccessRate(metrics);
+  
+    Object.assign(this.metrics, {
       hits: this.onlineMetrics.hits + this.offlineMetrics.hits,
       misses: this.onlineMetrics.misses + this.offlineMetrics.misses,
       totalOperations: this.onlineMetrics.totalOperations + this.offlineMetrics.totalOperations,
@@ -363,7 +359,7 @@ export class RedisService {
         consecutiveFailures: this.getDisplayedFailures(),
         lastConnectionAttempt: new Date()
       }
-    };
+    });
   }
 
   private calculateSuccessRate(metrics: ServiceMetrics): number {
@@ -382,39 +378,18 @@ export class RedisService {
     return Number(((totalOps - totalFails) / totalOps * 100).toFixed(2));
   }
 
-
   async get<T>(key: string): Promise<CacheResponse<T>> {
     const startTime = Date.now();
     try {
       this.validateKey(key);
   
-      // Fast-fail si ya sabemos que Redis está offline
-      if (this.serviceState !== REDIS_SERVICE_STATE.CONNECTED) {
-        this.logger.debug(`⚠️ Redis offline - Usando caché local directamente para: ${key}`);
-        return this.getFromLocalCache<T>(key, startTime);
-      }
+      const response = this.serviceState === REDIS_SERVICE_STATE.CONNECTED
+        ? await this.getFromRedis<T>(key)
+        : this.getFromLocalCache<T>(key, startTime);
   
-      const response = await firstValueFrom<CacheResponse<T>>(
-        this.cacheClient.send<CacheResponse<T>>(
-          { cmd: REDIS_GATEWAY_CONFIG.COMMANDS.GET }, 
-          key
-        ).pipe(
-          timeout(REDIS_GATEWAY_CONFIG.TIMEOUTS.OPERATION)
-        )
-      );
-  
-      this.updateMetrics('hit', Date.now() - startTime);
-      return {
-        ...response,
-        details: {
-          ...response.details,
-          responseTime: Date.now() - startTime,
-          lastCheck: new Date().toISOString()
-        }
-      };
+      return response;
   
     } catch (error) {
-      // Si es error de timeout, marcar como offline y usar caché local
       if (error instanceof TimeoutError) {
         this.serviceState = REDIS_SERVICE_STATE.ERROR;
         this.consecutiveFailures++;
@@ -423,12 +398,30 @@ export class RedisService {
       return this.handleError<T>(error, startTime, key);
     }
   }
+  
+  private async getFromRedis<T>(key: string): Promise<CacheResponse<T>> {
+    const response = await firstValueFrom<CacheResponse<T>>(
+      this.cacheClient.send<CacheResponse<T>>(
+        { cmd: REDIS_GATEWAY_CONFIG.COMMANDS.GET }, key
+      ).pipe(timeout(REDIS_GATEWAY_CONFIG.TIMEOUTS.OPERATION))
+    );
+  
+    this.updateMetrics('hit', Date.now() - response.details.responseTime);
+    return {
+      ...response,
+      details: {
+        ...response.details,
+        responseTime: Date.now() - response.details.responseTime,
+        lastCheck: new Date().toISOString()
+      }
+    };
+  }
+
 
   private getFromLocalCache<T>(key: string, startTime: number): CacheResponse<T> {
     const entry = this.localCache.get(key);
     const now = Date.now();
   
-    // Verificar si existe y no ha expirado
     if (entry && entry.expiresAt > now) {
       this.updateMetrics('hit', now - startTime);
       return {
@@ -444,10 +437,7 @@ export class RedisService {
       };
     }
   
-    // Si existe pero expiró, eliminarlo
-    if (entry) {
-      this.localCache.delete(key);
-    }
+    if (entry) this.localCache.delete(key);
   
     this.updateMetrics('miss', now - startTime);
     return {
@@ -489,13 +479,56 @@ export class RedisService {
     };
   }
 
+  // async set<T>(key: string, value: T, ttl?: number): Promise<CacheResponse> {
+  //   const startTime = Date.now();
+  //   try {
+  //     this.validateKey(key);
+  
+  //     // En modo online, guardar solo en Redis
+  //     if (this.serviceState === REDIS_SERVICE_STATE.CONNECTED) {
+  //       const response = await firstValueFrom<CacheResponse>(
+  //         this.cacheClient.send(
+  //           { cmd: REDIS_GATEWAY_CONFIG.COMMANDS.SET }, 
+  //           { key, value, ttl: ttl || REDIS_GATEWAY_CONFIG.TTL.DEFAULT }
+  //         ).pipe(timeout(this.timeoutMs))
+  //       );
+  
+  //       this.updateMetrics('hit', Date.now() - startTime);
+  //       return {
+  //         ...response,
+  //         details: {
+  //           ...response.details,
+  //           responseTime: Date.now() - startTime,
+  //           lastCheck: new Date().toISOString()
+  //         }
+  //       };
+  //     }
+  
+  //     // Solo usar caché local en modo offline
+  //     this.logger.debug(`⚠️ Redis offline - Guardando en caché local: ${key}`);
+  //     return this.setInLocalCache(key, value, startTime);
+  
+  //   } catch (error) {
+  //     return this.handleError(error, startTime, key);
+  //   }
+  // }
+
   async set<T>(key: string, value: T, ttl?: number): Promise<CacheResponse> {
     const startTime = Date.now();
     try {
       this.validateKey(key);
   
-      // En modo online, guardar solo en Redis
+      // En modo online, intentar guardar en Redis y caché local
       if (this.serviceState === REDIS_SERVICE_STATE.CONNECTED) {
+        this.logger.debug(`💾 Guardando en Redis y caché local: ${key}`);
+        
+        // Guardar en caché local primero
+        this.localCache.set(key, {
+          data: value,
+          timestamp: Date.now(),
+          expiresAt: Date.now() + ((ttl || REDIS_GATEWAY_CONFIG.LOCAL_CACHE.TTL) * 1000)
+        });
+  
         const response = await firstValueFrom<CacheResponse>(
           this.cacheClient.send(
             { cmd: REDIS_GATEWAY_CONFIG.COMMANDS.SET }, 
@@ -503,39 +536,85 @@ export class RedisService {
           ).pipe(timeout(this.timeoutMs))
         );
   
+        this.logger.debug(`✅ Dato guardado exitosamente - Key: ${key}, TTL: ${ttl || 'default'}s`);
         this.updateMetrics('hit', Date.now() - startTime);
+        
         return {
           ...response,
           details: {
             ...response.details,
             responseTime: Date.now() - startTime,
-            lastCheck: new Date().toISOString()
+            lastCheck: new Date().toISOString(),
+            localCacheInfo: {
+              size: this.localCache.size,
+              keys: Array.from(this.localCache.keys())
+            }
           }
         };
       }
   
       // Solo usar caché local en modo offline
-      this.logger.debug(`⚠️ Redis offline - Guardando en caché local: ${key}`);
-      return this.setInLocalCache(key, value, startTime);
-  
+      this.logger.debug(`⚠️ Redis offline - Guardando solo en caché local: ${key}`);
+      return this.setInLocalCache(key, value, startTime, ttl);
     } catch (error) {
+      this.logger.error(`❌ Error guardando dato - Key: ${key}`, error);
       return this.handleError(error, startTime, key);
     }
   }
 
-  private setInLocalCache(key: string, value: any, startTime: number): CacheResponse {
-    // Verificar límite de tamaño
+  // private setInLocalCache(key: string, value: any, startTime: number): CacheResponse {
+  //   // Verificar límite de tamaño
+  //   if (this.localCache.size >= REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE) {
+  //     const firstKey = this.localCache.keys().next().value;
+  //     this.localCache.delete(firstKey);
+  //   }
+  
+  //   this.localCache.set(key, {
+  //     data: value,
+  //     timestamp: Date.now(),
+  //     expiresAt: Date.now() + (REDIS_GATEWAY_CONFIG.LOCAL_CACHE.TTL * 1000)
+  //   });
+  
+  //   this.updateMetrics('hit', Date.now() - startTime);
+    
+  //   return {
+  //     success: true,
+  //     source: 'local',
+  //     data: value,
+  //     details: {
+  //       responseTime: Date.now() - startTime,
+  //       cached: true,
+  //       lastCheck: new Date().toISOString(),
+  //       cacheSize: this.localCache.size,
+  //       localCacheInfo: {
+  //         size: this.localCache.size,
+  //         keys: Array.from(this.localCache.keys())
+  //       }
+  //     }
+  //   };
+  // }
+
+  private setInLocalCache(key: string, value: any, startTime: number, ttl?: number): CacheResponse {
+    this.logger.debug(`🔄 Iniciando guardado en caché local - Key: ${key}`);
+    
+    // Verificar y limpiar si es necesario
     if (this.localCache.size >= REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE) {
-      const firstKey = this.localCache.keys().next().value;
-      this.localCache.delete(firstKey);
+      const deletedKey = this.localCache.keys().next().value;
+      this.localCache.delete(deletedKey);
+      this.logger.debug(`🧹 Limpiando caché local - Eliminada key: ${deletedKey}`);
     }
   
+    // Calcular TTL
+    const expiresAt = Date.now() + ((ttl || REDIS_GATEWAY_CONFIG.LOCAL_CACHE.TTL) * 1000);
+    
+    // Guardar en caché local
     this.localCache.set(key, {
       data: value,
       timestamp: Date.now(),
-      expiresAt: Date.now() + (REDIS_GATEWAY_CONFIG.LOCAL_CACHE.TTL * 1000)
+      expiresAt
     });
   
+    this.logger.debug(`✅ Dato guardado en caché local - Key: ${key}, Expires: ${new Date(expiresAt).toISOString()}`);
     this.updateMetrics('hit', Date.now() - startTime);
     
     return {
@@ -795,8 +874,20 @@ export class RedisService {
     };
   }
 
+  // private getKeyPattern(key: string): string {
+  //   return key.replace(/\d+/g, '');
+  // }
+
   private getKeyPattern(key: string): string {
-    return key.replace(/\d+/g, '');
+    // Detectar patrones basados en CACHE_KEYS
+    for (const [category, patterns] of Object.entries(CACHE_KEYS)) {
+      for (const [type, pattern] of Object.entries(patterns)) {
+        if (typeof pattern === 'string' && key.startsWith(pattern)) {
+          return `${category}.${type}`;
+        }
+      }
+    }
+    return key.replace(/[\d-]+/g, '*');
   }
 
   private summarizeKeyPatterns(keys: string[]): Record<string, number> {
@@ -809,4 +900,91 @@ export class RedisService {
     
     return patterns;
   }
+
+  private async checkConnectionLoop() {
+    this.logger.debug('📡 Iniciando monitoreo de conexión con Redis...');
+    await this.checkConnection();
+  
+    const runCheck = async () => {
+      this.logger.debug('🔄 Ejecutando checkConnection...');
+      await this.checkConnection();
+      this.connectionCheckInterval = setTimeout(runCheck, 10000);
+    };
+  
+    runCheck();
+  }  
+
+  async getDetailedMetrics(): Promise<DetailedCacheMetrics> {
+    const now = Date.now();
+    const totalHits = 0;
+    const oldestEntry = now;
+    const newestEntry = 0;
+    let memoryUsageEstimate = 0;
+    const patterns: Record<string, number> = {};
+
+    const entries = Array.from(this.localCache.entries()).map(([key, entry]) => {
+      const age = now - entry.timestamp;
+      const pattern = this.getKeyPattern(key);
+      patterns[pattern] = (patterns[pattern] || 0) + 1;
+      
+      // Estimación del tamaño en memoria
+      const entrySize = JSON.stringify(entry.data).length * 2;
+      memoryUsageEstimate += entrySize;
+
+      const expiresIn = entry.expiresAt ? entry.expiresAt - now : undefined;
+
+      return {
+        key,
+        hits: this.getHitsForKey(key),
+        age,
+        size: entrySize,
+        expiresIn: expiresIn > 0 ? expiresIn : undefined,
+        pattern,
+        metadata: entry.metadata
+      };
+    });
+
+    const metrics = await this.getMetrics();
+
+    return {
+      ...metrics,
+      localCache: {
+        size: this.localCache.size,
+        maxSize: REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE,
+        usagePercentage: (this.localCache.size / REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE) * 100,
+        oldestEntry: this.localCache.size > 0 ? oldestEntry : null,
+        newestEntry: this.localCache.size > 0 ? newestEntry : null,
+        hitRatio: this.calculateHitRatio(),
+        averageHits: this.calculateAverageHits(),
+        totalHits: this.getTotalHits(),
+        memoryUsageEstimate,
+        patterns
+      },
+      entries: entries.sort((a, b) => b.hits - a.hits)
+    };
+  }
+
+  
+
+  private getHitsForKey(key: string): number {
+    const metrics = this.metrics.online?.hits || 0;
+    return Math.floor(metrics / Math.max(1, this.localCache.size));
+  }
+
+  private calculateHitRatio(): number {
+    const hits = this.metrics.hits || 0;
+    const total = this.metrics.totalOperations || 1;
+    return (hits / total) * 100;
+  }
+
+  private calculateAverageHits(): number {
+    const totalHits = this.metrics.hits || 0;
+    return this.localCache.size > 0 ? totalHits / this.localCache.size : 0;
+  }
+
+  private getTotalHits(): number {
+    return this.metrics.hits || 0;
+  }
+
+  
 }

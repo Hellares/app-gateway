@@ -48,7 +48,7 @@ export interface CacheResponse<T = unknown> {
       size: number;
       keys: string[];
     };
-  };
-}
+};
 
+}
 
