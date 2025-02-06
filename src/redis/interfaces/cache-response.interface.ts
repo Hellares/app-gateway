@@ -44,6 +44,7 @@ export interface CacheResponse<T = unknown> {
     age?: number;
     timeOffline?: number;
     timeOfflineFormatted?: string;
+    ttl?: number;  // Añadimos esta línea
     localCacheInfo?: {
       size: number;
       keys: string[];

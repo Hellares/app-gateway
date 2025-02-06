@@ -378,16 +378,36 @@ export class RedisService {
     return Number(((totalOps - totalFails) / totalOps * 100).toFixed(2));
   }
 
+
   async get<T>(key: string): Promise<CacheResponse<T>> {
     const startTime = Date.now();
     try {
       this.validateKey(key);
   
-      const response = this.serviceState === REDIS_SERVICE_STATE.CONNECTED
-        ? await this.getFromRedis<T>(key)
-        : this.getFromLocalCache<T>(key, startTime);
+      // Primero verificar caché local cuando Redis está conectado
+      if (this.serviceState === REDIS_SERVICE_STATE.CONNECTED) {
+        const localValue = this.getFromLocalCache<T>(key, startTime);
+        if (localValue.success) {
+          this.logger.debug(`💾 Cache hit local: ${key}`);
+          return localValue;
+        }
   
-      return response;
+        // Si no está en local, obtener de Redis
+        const redisResponse = await this.getFromRedis<T>(key);
+        
+        // Si se encontró en Redis, guardar en caché local
+        if (redisResponse.success && redisResponse.data) {
+          this.logger.debug(`📝 Guardando en caché local desde Redis: ${key}`);
+          //await this.setInLocalCache(key, redisResponse.data, startTime, this.extractTTL(redisResponse));
+          await this.setInLocalCache(key, redisResponse.data, startTime, this.extractTTL(redisResponse));
+        }
+  
+        return redisResponse;
+      }
+  
+      // Si Redis está desconectado, usar solo caché local
+      this.logger.debug(`🔍 Redis desconectado - Usando caché local: ${key}`);
+      return this.getFromLocalCache<T>(key, startTime);
   
     } catch (error) {
       if (error instanceof TimeoutError) {
@@ -397,6 +417,11 @@ export class RedisService {
       }
       return this.handleError<T>(error, startTime, key);
     }
+  }
+  
+  //Método auxiliar para extraer TTL
+  private extractTTL(response: CacheResponse): number {
+    return response.details?.ttl || REDIS_GATEWAY_CONFIG.TTL.DEFAULT;
   }
   
   private async getFromRedis<T>(key: string): Promise<CacheResponse<T>> {
@@ -422,7 +447,8 @@ export class RedisService {
     const entry = this.localCache.get(key);
     const now = Date.now();
   
-    if (entry && entry.expiresAt > now) {
+  //if (entry && entry.expiresAt > now) {
+    if (entry?.expiresAt > now) {
       this.updateMetrics('hit', now - startTime);
       return {
         success: true,
@@ -479,64 +505,30 @@ export class RedisService {
     };
   }
 
-  // async set<T>(key: string, value: T, ttl?: number): Promise<CacheResponse> {
-  //   const startTime = Date.now();
-  //   try {
-  //     this.validateKey(key);
-  
-  //     // En modo online, guardar solo en Redis
-  //     if (this.serviceState === REDIS_SERVICE_STATE.CONNECTED) {
-  //       const response = await firstValueFrom<CacheResponse>(
-  //         this.cacheClient.send(
-  //           { cmd: REDIS_GATEWAY_CONFIG.COMMANDS.SET }, 
-  //           { key, value, ttl: ttl || REDIS_GATEWAY_CONFIG.TTL.DEFAULT }
-  //         ).pipe(timeout(this.timeoutMs))
-  //       );
-  
-  //       this.updateMetrics('hit', Date.now() - startTime);
-  //       return {
-  //         ...response,
-  //         details: {
-  //           ...response.details,
-  //           responseTime: Date.now() - startTime,
-  //           lastCheck: new Date().toISOString()
-  //         }
-  //       };
-  //     }
-  
-  //     // Solo usar caché local en modo offline
-  //     this.logger.debug(`⚠️ Redis offline - Guardando en caché local: ${key}`);
-  //     return this.setInLocalCache(key, value, startTime);
-  
-  //   } catch (error) {
-  //     return this.handleError(error, startTime, key);
-  //   }
-  // }
-
   async set<T>(key: string, value: T, ttl?: number): Promise<CacheResponse> {
     const startTime = Date.now();
     try {
       this.validateKey(key);
   
-      // En modo online, intentar guardar en Redis y caché local
+      // Si Redis está conectado, guardar solo en Redis inicialmente
       if (this.serviceState === REDIS_SERVICE_STATE.CONNECTED) {
-        this.logger.debug(`💾 Guardando en Redis y caché local: ${key}`);
+        this.logger.debug(`💾 Guardando en Redis: ${key}`);
         
-        // Guardar en caché local primero
-        this.localCache.set(key, {
-          data: value,
-          timestamp: Date.now(),
-          expiresAt: Date.now() + ((ttl || REDIS_GATEWAY_CONFIG.LOCAL_CACHE.TTL) * 1000)
-        });
-  
         const response = await firstValueFrom<CacheResponse>(
           this.cacheClient.send(
             { cmd: REDIS_GATEWAY_CONFIG.COMMANDS.SET }, 
-            { key, value, ttl: ttl || REDIS_GATEWAY_CONFIG.TTL.DEFAULT }
+            { 
+              key, 
+              value, 
+              ttl: ttl || REDIS_GATEWAY_CONFIG.TTL.DEFAULT 
+            }
           ).pipe(timeout(this.timeoutMs))
         );
   
-        this.logger.debug(`✅ Dato guardado exitosamente - Key: ${key}, TTL: ${ttl || 'default'}s`);
+        if (response.success) {
+          this.logger.debug(`✅ Dato guardado exitosamente en Redis: ${key}`);
+        }
+  
         this.updateMetrics('hit', Date.now() - startTime);
         
         return {
@@ -544,16 +536,12 @@ export class RedisService {
           details: {
             ...response.details,
             responseTime: Date.now() - startTime,
-            lastCheck: new Date().toISOString(),
-            localCacheInfo: {
-              size: this.localCache.size,
-              keys: Array.from(this.localCache.keys())
-            }
+            lastCheck: new Date().toISOString()
           }
         };
       }
   
-      // Solo usar caché local en modo offline
+      // En modo offline, usar solo caché local
       this.logger.debug(`⚠️ Redis offline - Guardando solo en caché local: ${key}`);
       return this.setInLocalCache(key, value, startTime, ttl);
     } catch (error) {
@@ -562,37 +550,7 @@ export class RedisService {
     }
   }
 
-  // private setInLocalCache(key: string, value: any, startTime: number): CacheResponse {
-  //   // Verificar límite de tamaño
-  //   if (this.localCache.size >= REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE) {
-  //     const firstKey = this.localCache.keys().next().value;
-  //     this.localCache.delete(firstKey);
-  //   }
-  
-  //   this.localCache.set(key, {
-  //     data: value,
-  //     timestamp: Date.now(),
-  //     expiresAt: Date.now() + (REDIS_GATEWAY_CONFIG.LOCAL_CACHE.TTL * 1000)
-  //   });
-  
-  //   this.updateMetrics('hit', Date.now() - startTime);
-    
-  //   return {
-  //     success: true,
-  //     source: 'local',
-  //     data: value,
-  //     details: {
-  //       responseTime: Date.now() - startTime,
-  //       cached: true,
-  //       lastCheck: new Date().toISOString(),
-  //       cacheSize: this.localCache.size,
-  //       localCacheInfo: {
-  //         size: this.localCache.size,
-  //         keys: Array.from(this.localCache.keys())
-  //       }
-  //     }
-  //   };
-  // }
+
 
   private setInLocalCache(key: string, value: any, startTime: number, ttl?: number): CacheResponse {
     this.logger.debug(`🔄 Iniciando guardado en caché local - Key: ${key}`);

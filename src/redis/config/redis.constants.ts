@@ -13,9 +13,9 @@ export const REDIS_GATEWAY_CONFIG = {
 
   // Timeouts ajustados para RMQ
   TIMEOUTS: {
-    OPERATION: 5000,      // 1 segundos para operaciones estándar
-    HEALTH_CHECK: 5000,   // 1 segundo para health checks
-    COMMAND: 5000        // 1 segundos para comandos
+    OPERATION: 2000,      // 1 segundos para operaciones estándar
+    HEALTH_CHECK: 2000,   // 1 segundo para health checks
+    COMMAND: 2000        // 1 segundos para comandos
   },
 
   // Configuración de caché local (solo para fallback)
