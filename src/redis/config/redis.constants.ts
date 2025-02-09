@@ -8,7 +8,7 @@ export const REDIS_GATEWAY_CONFIG = {
     DEL: 'cache.delete',
     EXISTS: 'cache.exists',
     CLEAR: 'cache.clear',
-    HEALTH: 'cache.health'
+    HEALTH: 'cache.health',
   },
 
   // Timeouts ajustados para RMQ

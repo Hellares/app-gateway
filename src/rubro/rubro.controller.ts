@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpStatus, Inject, Logger, Param, Post, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpStatus, Inject, InternalServerErrorException, Logger, NotFoundException, Param, ParseBoolPipe, ParseIntPipe, Post, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { catchError, firstValueFrom, timeout, TimeoutError } from 'rxjs';
@@ -355,6 +355,7 @@ async findDeletedRubros(@Query() paginationDto: PaginationDto) {
       this.logger.error('Error en invalidación de caché:', error);
     }
   }
+
 
   
 }
