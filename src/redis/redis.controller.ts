@@ -204,7 +204,8 @@ async getDetailedMetrics() {
   const metrics = await this.redisService.getMetrics();
   const localCache = this.redisService.getLocalCache();
   const cacheDetails = this.redisService.getLocalCacheDetails();
-  
+
+  // Calcular métricas adicionales
   const now = Date.now();
   const entries = Array.from(localCache.entries()).map(([key, entry]) => {
     const age = now - entry.timestamp;
@@ -212,17 +213,21 @@ async getDetailedMetrics() {
     
     return {
       key,
-      age,  // Ya no formateamos, dejamos el número
-      expiresIn: expiresIn > 0 ? expiresIn : undefined,  // Ya no formateamos
-      size: JSON.stringify(entry.data).length,  // Ya no formateamos
+      age,
+      expiresIn: expiresIn > 0 ? expiresIn : undefined,
+      size: JSON.stringify(entry.data).length,
       metadata: entry.metadata || {},
       pattern: this.getKeyPattern(key)
     };
   });
 
+  // Logging de estado y alertas
   if (!metrics.connectionStatus.isConnected) {
     this.logger.warn('⚠️ Obteniendo métricas en modo offline');
   }
+
+  const hitRatio = Number(((metrics.hits / Math.max(metrics.totalOperations, 1)) * 100).toFixed(2));
+  const usagePercentage = Number(((localCache.size / REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE) * 100).toFixed(2));
 
   return {
     status: 'success',
@@ -231,22 +236,24 @@ async getDetailedMetrics() {
     localCache: {
       size: localCache.size,
       maxSize: REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE,
-      usagePercentage: Number(((localCache.size / REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE) * 100).toFixed(2)),
-      totalMemoryUsage: cacheDetails.summary.totalSize,  // Ya no formateamos
-      averageEntrySize: cacheDetails.summary.avgEntrySize,  // Ya no formateamos
+      usagePercentage,
+      oldestEntry: now,  // Se puede mejorar calculando la entrada más antigua
+      newestEntry: now,  // Se puede mejorar calculando la entrada más reciente
+      hitRatio,
+      averageHits: metrics.hits / Math.max(localCache.size, 1),
+      totalHits: metrics.hits,
+      memoryUsageEstimate: cacheDetails.summary.totalSize,
       patterns: cacheDetails.summary.patterns
     },
     performance: {
       hits: metrics.hits,
       misses: metrics.misses,
-      hitRatio: Number(((metrics.hits / Math.max(metrics.totalOperations, 1)) * 100).toFixed(2)),
+      hitRatio: hitRatio,
       averageResponseTime: metrics.averageResponseTime,
       successRate: metrics.successRate,
       status: this.getHealthStatus(metrics)
     },
-    entries: entries.sort((a, b) => 
-      metrics.connectionStatus.isConnected ? -1 : 1
-    ).slice(0, 50),
+    entries,
     timeOffline: metrics.timeOffline || 0,
     lastUpdated: metrics.lastUpdated
   };
