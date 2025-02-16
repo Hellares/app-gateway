@@ -138,14 +138,73 @@ async getLocalCacheStats() {
   };
 }
 
+// @Get('metrics/detailed')
+// async getDetailedMetrics() {
+//   this.logger.debug('🔍 Obteniendo métricas detalladas de Redis');
+//   const metrics = await this.redisService.getMetrics();
+//   const localCache = this.redisService.getLocalCache();
+//   const cacheDetails = this.redisService.getLocalCacheDetails();
+
+//   // Calcular métricas adicionales
+//   const now = Date.now();
+//   const entries = Array.from(localCache.entries()).map(([key, entry]) => {
+//     const age = now - entry.timestamp;
+//     const expiresIn = entry.expiresAt ? entry.expiresAt - now : undefined;
+    
+//     return {
+//       key,
+//       age: this.formatDuration(age),
+//       expiresIn: expiresIn && expiresIn > 0 ? this.formatDuration(expiresIn) : 'Expirado',
+//       size: this.formatBytes(JSON.stringify(entry.data).length),
+//       metadata: entry.metadata || {},
+//       pattern: this.getKeyPattern(key)
+//     };
+//   });
+
+//   // Logging de estado y alertas
+//   if (!metrics.connectionStatus.isConnected) {
+//     this.logger.warn('⚠️ Obteniendo métricas en modo offline');
+//   }
+
+//   if (localCache.size > (REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE * 0.9)) {
+//     this.logger.warn(`⚠️ Caché local cerca del límite: ${localCache.size}/${REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE}`);
+//   }
+
+//   return {
+//     status: 'success',
+//     timestamp: new Date().toISOString(),
+//     serviceState: metrics.connectionStatus.isConnected ? 'connected' : 'disconnected',
+//     localCache: {
+//       size: localCache.size,
+//       maxSize: REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE,
+//       usagePercentage: `${((localCache.size / REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE) * 100).toFixed(2)}%`,
+//       totalMemoryUsage: this.formatBytes(cacheDetails.summary.totalSize),
+//       averageEntrySize: this.formatBytes(cacheDetails.summary.avgEntrySize),
+//       patterns: cacheDetails.summary.patterns
+//     },
+//     performance: {
+//       hits: metrics.hits,
+//       misses: metrics.misses,
+//       hitRatio: `${((metrics.hits / Math.max(metrics.totalOperations, 1)) * 100).toFixed(2)}%`,
+//       averageResponseTime: `${metrics.averageResponseTime?.toFixed(2) || 0}ms`,
+//       successRate: `${metrics.successRate}%`,
+//       status: this.getHealthStatus(metrics)
+//     },
+//     entries: entries.sort((a, b) => 
+//       metrics.connectionStatus.isConnected ? -1 : 1
+//     ).slice(0, 50), // Limitar a 50 entradas para no sobrecargar la respuesta
+//     timeOffline: metrics.timeOfflineFormatted || '0s',
+//     lastUpdated: metrics.lastUpdated
+//   };
+// }
+
 @Get('metrics/detailed')
 async getDetailedMetrics() {
   this.logger.debug('🔍 Obteniendo métricas detalladas de Redis');
   const metrics = await this.redisService.getMetrics();
   const localCache = this.redisService.getLocalCache();
   const cacheDetails = this.redisService.getLocalCacheDetails();
-
-  // Calcular métricas adicionales
+  
   const now = Date.now();
   const entries = Array.from(localCache.entries()).map(([key, entry]) => {
     const age = now - entry.timestamp;
@@ -153,21 +212,16 @@ async getDetailedMetrics() {
     
     return {
       key,
-      age: this.formatDuration(age),
-      expiresIn: expiresIn && expiresIn > 0 ? this.formatDuration(expiresIn) : 'Expirado',
-      size: this.formatBytes(JSON.stringify(entry.data).length),
+      age,  // Ya no formateamos, dejamos el número
+      expiresIn: expiresIn > 0 ? expiresIn : undefined,  // Ya no formateamos
+      size: JSON.stringify(entry.data).length,  // Ya no formateamos
       metadata: entry.metadata || {},
       pattern: this.getKeyPattern(key)
     };
   });
 
-  // Logging de estado y alertas
   if (!metrics.connectionStatus.isConnected) {
     this.logger.warn('⚠️ Obteniendo métricas en modo offline');
-  }
-
-  if (localCache.size > (REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE * 0.9)) {
-    this.logger.warn(`⚠️ Caché local cerca del límite: ${localCache.size}/${REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE}`);
   }
 
   return {
@@ -177,23 +231,23 @@ async getDetailedMetrics() {
     localCache: {
       size: localCache.size,
       maxSize: REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE,
-      usagePercentage: `${((localCache.size / REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE) * 100).toFixed(2)}%`,
-      totalMemoryUsage: this.formatBytes(cacheDetails.summary.totalSize),
-      averageEntrySize: this.formatBytes(cacheDetails.summary.avgEntrySize),
+      usagePercentage: Number(((localCache.size / REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE) * 100).toFixed(2)),
+      totalMemoryUsage: cacheDetails.summary.totalSize,  // Ya no formateamos
+      averageEntrySize: cacheDetails.summary.avgEntrySize,  // Ya no formateamos
       patterns: cacheDetails.summary.patterns
     },
     performance: {
       hits: metrics.hits,
       misses: metrics.misses,
-      hitRatio: `${((metrics.hits / Math.max(metrics.totalOperations, 1)) * 100).toFixed(2)}%`,
-      averageResponseTime: `${metrics.averageResponseTime?.toFixed(2) || 0}ms`,
-      successRate: `${metrics.successRate}%`,
+      hitRatio: Number(((metrics.hits / Math.max(metrics.totalOperations, 1)) * 100).toFixed(2)),
+      averageResponseTime: metrics.averageResponseTime,
+      successRate: metrics.successRate,
       status: this.getHealthStatus(metrics)
     },
     entries: entries.sort((a, b) => 
       metrics.connectionStatus.isConnected ? -1 : 1
-    ).slice(0, 50), // Limitar a 50 entradas para no sobrecargar la respuesta
-    timeOffline: metrics.timeOfflineFormatted || '0s',
+    ).slice(0, 50),
+    timeOffline: metrics.timeOffline || 0,
     lastUpdated: metrics.lastUpdated
   };
 }
