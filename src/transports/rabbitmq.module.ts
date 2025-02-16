@@ -22,7 +22,14 @@ const clientsConfigArray = serviceConfig.map(service => ({
     queueOptions: {
       durable: true,
     },
+    noAssert: false,
+    persistent: true,
+    heartbeat: 120,
+  socketOptions: {
+    heartbeatIntervalInSeconds: 120,
+      timeout: 10000,         // 10 segundos de timeout
   },
+  }
 } as RmqOptions & { name: string; }));
 
 const clientsConfig = ClientsModule.register(clientsConfigArray);

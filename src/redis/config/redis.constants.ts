@@ -13,9 +13,9 @@ export const REDIS_GATEWAY_CONFIG = {
 
   // Timeouts ajustados para RMQ
   TIMEOUTS: {
-    OPERATION: 500,      // 1 segundos para operaciones estándar
-    HEALTH_CHECK: 1000,   // 1 segundo para health checks
-    COMMAND: 800        // 1 segundos para comandos
+    OPERATION: 6000,      // 1 segundos para operaciones estándar
+    HEALTH_CHECK: 4000,   // 1 segundo para health checks
+    COMMAND: 5000        // 1 segundos para comandos
   },
 
   // Configuración de caché local (solo para fallback)
@@ -36,11 +36,11 @@ export const REDIS_GATEWAY_CONFIG = {
 
   // Configuración de reintentos mejorada
   ERROR_HANDLING: {
-    MAX_RETRIES: 3,
+    MAX_RETRIES: 5,
     MAX_DISPLAYED_FAILURES: 5,    // Máximo de fallos a mostrar
     BACKOFF: {
-      INITIAL_RETRY_DELAY: 2000,  // 2 segundo
-      MAX_RETRY_DELAY: 30000,     // 30 segundos
+      INITIAL_RETRY_DELAY: 3000,  // 2 segundo
+      MAX_RETRY_DELAY: 60000,     // 30 segundos
       FACTOR: 2                   // Factor de incremento exponencial
     }
   },

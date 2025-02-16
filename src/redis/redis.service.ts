@@ -224,7 +224,7 @@ export class RedisService {
   private async checkConnection() {
     try {
       this.logger.debug('🔍 Verificando conexión con Redis...');
-      const response = await firstValueFrom(
+          const response = await firstValueFrom(
         this.cacheClient.send(
           { cmd: REDIS_GATEWAY_CONFIG.COMMANDS.HEALTH }, 
           {}
