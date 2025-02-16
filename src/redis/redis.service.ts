@@ -474,18 +474,28 @@ private calculateMovingAverage(
   newValue: number, 
   totalCount: number
 ): number {
-  // Convertir valores a números
-  const numCurrentAvg = Number(currentAvg);
-  const numNewValue = Number(newValue);
-  const numTotalCount = Number(totalCount);
+  // Validaciones de seguridad
+  if (totalCount <= 0) return newValue;
+  
+  // Conversión explícita a número
+  const currentAvgNum = Number(currentAvg);
+  const newValueNum = Number(newValue);
 
-  // Validaciones
-  if (isNaN(numCurrentAvg) || numTotalCount <= 1) {
-    return numNewValue;
+  // Prevenir desbordamiento
+  if (
+    !isFinite(currentAvgNum) || 
+    !isFinite(newValueNum) || 
+    isNaN(currentAvgNum) || 
+    isNaN(newValueNum)
+  ) {
+    return newValueNum;
   }
 
-  // Cálculo de promedio móvil
-  return ((numCurrentAvg * (numTotalCount - 1)) + numNewValue) / numTotalCount;
+  // Cálculo seguro
+  const average = ((currentAvgNum * (totalCount - 1)) + newValueNum) / totalCount;
+
+  // Limitar a un rango razonable
+  return Math.min(Math.max(average, 0), 10000);
 }
 
 // Cálculo de tasa de éxito con manejo de casos especiales
