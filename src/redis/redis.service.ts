@@ -329,53 +329,79 @@ export class RedisService {
     }
   }
 
+  // private updateMetrics(operation: 'hit' | 'miss', responseTime: number, failed = false) {
+  //   if (responseTime <= 0){
+  //     responseTime = 0.1; // valor minimo para evitar 0 o negativos
+  //   }
+  
+  //   const metrics = this.serviceState === REDIS_SERVICE_STATE.CONNECTED 
+  //     ? this.onlineMetrics 
+  //     : this.offlineMetrics;
+
+  //   metrics.totalOperations++;
+  //   metrics.lastResponseTime = responseTime;
+
+  //   // metrics.averageResponseTime = 
+  //   //   ((metrics.averageResponseTime * (metrics.totalOperations - 1)) + responseTime) / metrics.totalOperations;
+  //   // Cálculo correcto del promedio
+  //   metrics.averageResponseTime = metrics.averageResponseTime === null 
+  //     ? responseTime 
+  //     : ((metrics.averageResponseTime * (metrics.totalOperations - 1)) + responseTime) / metrics.totalOperations;
+  
+  //   if (failed) metrics.failedOperations++;
+  //   metrics[operation === 'hit' ? 'hits' : 'misses']++;
+  
+  //   metrics.successRate = this.calculateSuccessRate(metrics);
+  //   Object.assign(this.metrics, {
+  //     hits: this.onlineMetrics.hits + this.offlineMetrics.hits,
+  //     misses: this.onlineMetrics.misses + this.offlineMetrics.misses,
+  //     totalOperations: this.onlineMetrics.totalOperations + this.offlineMetrics.totalOperations,
+  //     failedOperations: this.onlineMetrics.failedOperations + this.offlineMetrics.failedOperations,
+  //     averageResponseTime: responseTime, // Aseguramos que nunca sea null
+  //     lastResponseTime: responseTime,    // Aseguramos que nunca sea null
+  //     successRate: this.calculateTotalSuccessRate(),
+  //     localCacheSize: this.localCache.size,
+  //     lastUpdated: new Date(),
+  //     connectionStatus: {
+  //       isConnected: this.serviceState === REDIS_SERVICE_STATE.CONNECTED,
+  //       consecutiveFailures: this.getDisplayedFailures(),
+  //       lastConnectionAttempt: new Date()
+  //     }
+  //   });
+  // }
+
   private updateMetrics(operation: 'hit' | 'miss', responseTime: number, failed = false) {
-    if (responseTime <= 0){
-      responseTime = 0.1; // valor minimo para evitar 0 o negativos
-    }
+    // Asegurar que responseTime sea un número válido
+    const validResponseTime = responseTime <= 0 ? 0.1 : responseTime;
   
     const metrics = this.serviceState === REDIS_SERVICE_STATE.CONNECTED 
       ? this.onlineMetrics 
       : this.offlineMetrics;
-
+  
     metrics.totalOperations++;
-    metrics.lastResponseTime = responseTime;
-
-    // metrics.averageResponseTime = 
-    //   ((metrics.averageResponseTime * (metrics.totalOperations - 1)) + responseTime) / metrics.totalOperations;
-    // Cálculo correcto del promedio
-    metrics.averageResponseTime = metrics.averageResponseTime === null 
-      ? responseTime 
-      : ((metrics.averageResponseTime * (metrics.totalOperations - 1)) + responseTime) / metrics.totalOperations;
+    metrics.lastResponseTime = validResponseTime;
+  
+    // Calcular el promedio asegurando valores numéricos
+    if (metrics.averageResponseTime === null || isNaN(metrics.averageResponseTime)) {
+      metrics.averageResponseTime = validResponseTime;
+    } else {
+      metrics.averageResponseTime = 
+        ((metrics.averageResponseTime * (metrics.totalOperations - 1)) + validResponseTime) / 
+        metrics.totalOperations;
+    }
   
     if (failed) metrics.failedOperations++;
     metrics[operation === 'hit' ? 'hits' : 'misses']++;
-  
     metrics.successRate = this.calculateSuccessRate(metrics);
   
-    // Object.assign(this.metrics, {
-    //   hits: this.onlineMetrics.hits + this.offlineMetrics.hits,
-    //   misses: this.onlineMetrics.misses + this.offlineMetrics.misses,
-    //   totalOperations: this.onlineMetrics.totalOperations + this.offlineMetrics.totalOperations,
-    //   failedOperations: this.onlineMetrics.failedOperations + this.offlineMetrics.failedOperations,
-    //   averageResponseTime: responseTime,
-    //   lastResponseTime: responseTime,
-    //   successRate: this.calculateTotalSuccessRate(),
-    //   localCacheSize: this.localCache.size,
-    //   lastUpdated: new Date(),
-    //   connectionStatus: {
-    //     isConnected: this.serviceState === REDIS_SERVICE_STATE.CONNECTED,
-    //     consecutiveFailures: this.getDisplayedFailures(),
-    //     lastConnectionAttempt: new Date()
-    //   }
-    // });
+    // Actualizar métricas globales asegurando valores numéricos
     Object.assign(this.metrics, {
       hits: this.onlineMetrics.hits + this.offlineMetrics.hits,
       misses: this.onlineMetrics.misses + this.offlineMetrics.misses,
       totalOperations: this.onlineMetrics.totalOperations + this.offlineMetrics.totalOperations,
       failedOperations: this.onlineMetrics.failedOperations + this.offlineMetrics.failedOperations,
-      averageResponseTime: responseTime, // Aseguramos que nunca sea null
-      lastResponseTime: responseTime,    // Aseguramos que nunca sea null
+      averageResponseTime: Number(metrics.averageResponseTime.toFixed(2)), // Asegurar número con 2 decimales
+      lastResponseTime: validResponseTime,
       successRate: this.calculateTotalSuccessRate(),
       localCacheSize: this.localCache.size,
       lastUpdated: new Date(),
