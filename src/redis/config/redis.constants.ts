@@ -13,9 +13,9 @@ export const REDIS_GATEWAY_CONFIG = {
 
   // Timeouts ajustados para RMQ
   TIMEOUTS: {
-    OPERATION: 6000,      // 1 segundos para operaciones estándar
-    HEALTH_CHECK: 4000,   // 1 segundo para health checks
-    COMMAND: 5000        // 1 segundos para comandos
+    OPERATION: 8000,      // 1 segundos para operaciones estándar
+    HEALTH_CHECK: 5000,   // 1 segundo para health checks
+    COMMAND: 6000        // 1 segundos para comandos
   },
 
   // Configuración de caché local (solo para fallback)
@@ -23,14 +23,14 @@ export const REDIS_GATEWAY_CONFIG = {
     ENABLED: true,
     MAX_SIZE: 1000,       // Número máximo de entradas
     CLEANUP_INTERVAL: 300000,  // 5 minutos
-    TTL: 300             // 5 minutos de TTL para entradas locales
+    TTL: 600             // 10 minutos de TTL para entradas locales
   },
 
   // Health check de microservicio
   HEALTH_CHECK: {
     ENABLED: true,
     INTERVAL: 30000,      // 30 segundos entre checks
-    TIMEOUT: 2000,        // 1 segundo de timeout para health check
+    TIMEOUT: 3000,        // 1 segundo de timeout para health check
     MAX_CONSECUTIVE_FAILURES: 3  // Número de fallos antes de considerar servicio caído
   },
 
@@ -47,9 +47,9 @@ export const REDIS_GATEWAY_CONFIG = {
 
   // TTLs por defecto (en segundos)
   TTL: {
-    DEFAULT: 3600,        // 1 hora
-    SHORT: 300,          // 5 minutos
-    MEDIUM: 1800,        // 30 minutos
+    DEFAULT: 7200,        // 2 hora
+    SHORT: 600,          // 5 minutos
+    MEDIUM: 3600,        // 30 minutos
     LONG: 86400,         // 24 horas
   },
 
