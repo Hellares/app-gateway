@@ -40,7 +40,7 @@ export class RedisService {
     averageResponseTime: 0,
     lastResponseTime: 0,
     failedOperations: 0,
-    successRate: 100,
+    successRate: 10,
     localCacheSize: 0,
     lastUpdated: new Date(),
     connectionStatus: {
@@ -88,10 +88,10 @@ export class RedisService {
       this.serviceState = REDIS_SERVICE_STATE.CONNECTING;
   
       await this.cacheClient.connect();
-      const healthCheck = await this.healthCheck();
+      // const healthCheck = await this.healthCheck();
       await this.checkConnectionLoop();
   
-      if (healthCheck.status !== 'healthy') throw new Error('Health check inicial fallido');
+      // if (healthCheck.status !== 'healthy') throw new Error('Health check inicial fallido');
   
       Object.assign(this, {
         serviceState: REDIS_SERVICE_STATE.CONNECTED,
@@ -106,6 +106,19 @@ export class RedisService {
       this.attemptReconnection();
     }
   }
+
+  private async checkConnectionLoop() {
+    this.logger.debug('📡 Iniciando monitoreo de conexión con Redis...');
+    await this.checkConnection();
+  
+    const runCheck = async () => {
+      this.logger.debug('🔄 Ejecutando checkConnection...');
+      await this.checkConnection();
+      this.connectionCheckInterval = setTimeout(runCheck, 10000);
+    };
+  
+    runCheck();
+  }  
 
   private async startConnectionMonitoring() {
     this.logger.debug('📡 Iniciando monitoreo de conexión con Redis...');
@@ -329,106 +342,172 @@ export class RedisService {
     }
   }
 
-  // private updateMetrics(operation: 'hit' | 'miss', responseTime: number, failed = false) {
-  //   if (responseTime <= 0){
-  //     responseTime = 0.1; // valor minimo para evitar 0 o negativos
-  //   }
-  
-  //   const metrics = this.serviceState === REDIS_SERVICE_STATE.CONNECTED 
-  //     ? this.onlineMetrics 
-  //     : this.offlineMetrics;
+private updateMetrics(operation: 'hit' | 'miss', responseTime: number, failed = false) {
+  try {
+    const validResponseTime = this.validateResponseTime(responseTime);
+    const metrics = this.getCurrentMetrics();
 
-  //   metrics.totalOperations++;
-  //   metrics.lastResponseTime = responseTime;
+    this.updateMetricsForCurrentState(metrics, operation, validResponseTime, failed);
+    this.updateGlobalMetrics(metrics, validResponseTime);
 
-  //   // metrics.averageResponseTime = 
-  //   //   ((metrics.averageResponseTime * (metrics.totalOperations - 1)) + responseTime) / metrics.totalOperations;
-  //   // Cálculo correcto del promedio
-  //   metrics.averageResponseTime = metrics.averageResponseTime === null 
-  //     ? responseTime 
-  //     : ((metrics.averageResponseTime * (metrics.totalOperations - 1)) + responseTime) / metrics.totalOperations;
-  
-  //   if (failed) metrics.failedOperations++;
-  //   metrics[operation === 'hit' ? 'hits' : 'misses']++;
-  
-  //   metrics.successRate = this.calculateSuccessRate(metrics);
-  //   Object.assign(this.metrics, {
-  //     hits: this.onlineMetrics.hits + this.offlineMetrics.hits,
-  //     misses: this.onlineMetrics.misses + this.offlineMetrics.misses,
-  //     totalOperations: this.onlineMetrics.totalOperations + this.offlineMetrics.totalOperations,
-  //     failedOperations: this.onlineMetrics.failedOperations + this.offlineMetrics.failedOperations,
-  //     averageResponseTime: responseTime, // Aseguramos que nunca sea null
-  //     lastResponseTime: responseTime,    // Aseguramos que nunca sea null
-  //     successRate: this.calculateTotalSuccessRate(),
-  //     localCacheSize: this.localCache.size,
-  //     lastUpdated: new Date(),
-  //     connectionStatus: {
-  //       isConnected: this.serviceState === REDIS_SERVICE_STATE.CONNECTED,
-  //       consecutiveFailures: this.getDisplayedFailures(),
-  //       lastConnectionAttempt: new Date()
-  //     }
-  //   });
-  // }
-
-  private updateMetrics(operation: 'hit' | 'miss', responseTime: number, failed = false) {
-    // Asegurar que responseTime sea un número válido
-    const validResponseTime = responseTime <= 0 ? 0.1 : responseTime;
-  
-    const metrics = this.serviceState === REDIS_SERVICE_STATE.CONNECTED 
-      ? this.onlineMetrics 
-      : this.offlineMetrics;
-  
-    metrics.totalOperations++;
-    metrics.lastResponseTime = validResponseTime;
-  
-    // Calcular el promedio asegurando valores numéricos
-    if (metrics.averageResponseTime === null || isNaN(metrics.averageResponseTime)) {
-      metrics.averageResponseTime = validResponseTime;
-    } else {
-      metrics.averageResponseTime = 
-        ((metrics.averageResponseTime * (metrics.totalOperations - 1)) + validResponseTime) / 
-        metrics.totalOperations;
-    }
-  
-    if (failed) metrics.failedOperations++;
-    metrics[operation === 'hit' ? 'hits' : 'misses']++;
-    metrics.successRate = this.calculateSuccessRate(metrics);
-  
-    // Actualizar métricas globales asegurando valores numéricos
-    Object.assign(this.metrics, {
-      hits: this.onlineMetrics.hits + this.offlineMetrics.hits,
-      misses: this.onlineMetrics.misses + this.offlineMetrics.misses,
-      totalOperations: this.onlineMetrics.totalOperations + this.offlineMetrics.totalOperations,
-      failedOperations: this.onlineMetrics.failedOperations + this.offlineMetrics.failedOperations,
-      averageResponseTime: Number(metrics.averageResponseTime.toFixed(2)), // Asegurar número con 2 decimales
-      lastResponseTime: validResponseTime,
-      successRate: this.calculateTotalSuccessRate(),
-      localCacheSize: this.localCache.size,
-      lastUpdated: new Date(),
-      connectionStatus: {
-        isConnected: this.serviceState === REDIS_SERVICE_STATE.CONNECTED,
-        consecutiveFailures: this.getDisplayedFailures(),
-        lastConnectionAttempt: new Date()
-      }
+    // this.logger.debug('Métricas actualizadas', {
+    //   operation,
+    //   responseTime: validResponseTime,
+    //   failed,
+    //   currentMetrics: this.metrics
+    // });
+  } catch (error) {
+    this.logger.error('Error actualizando métricas', { 
+      error, 
+      operation, 
+      responseTime 
     });
   }
+}
 
-  private calculateSuccessRate(metrics: ServiceMetrics): number {
-    if (metrics.totalOperations === 0) return 100;
-    return Number(
-      ((metrics.totalOperations - metrics.failedOperations) / 
-      metrics.totalOperations * 100).toFixed(2)
-    );
+private getCurrentMetrics(): ServiceMetrics {
+  return this.serviceState === REDIS_SERVICE_STATE.CONNECTED 
+    ? this.onlineMetrics 
+    : this.offlineMetrics;
+}
+
+private updateMetricsForCurrentState(
+  metrics: ServiceMetrics, 
+  operation: 'hit' | 'miss', 
+  responseTime: number, 
+  failed: boolean
+) {
+  metrics.totalOperations = this.safeIncrement(metrics.totalOperations);
+  metrics.lastResponseTime = responseTime;
+  metrics.averageResponseTime = this.calculateMovingAverage(
+    metrics.averageResponseTime, 
+    responseTime, 
+    metrics.totalOperations
+  );
+
+  if (failed) {
+    metrics.failedOperations = this.safeIncrement(metrics.failedOperations);
   }
 
-  private calculateTotalSuccessRate(): number {
-    const totalOps = this.onlineMetrics.totalOperations + this.offlineMetrics.totalOperations;
-    const totalFails = this.onlineMetrics.failedOperations + this.offlineMetrics.failedOperations;
+  metrics[operation === 'hit' ? 'hits' : 'misses'] = 
+    this.safeIncrement(metrics[operation === 'hit' ? 'hits' : 'misses']);
+
+  metrics.successRate = this.calculateSuccessRate(metrics);
+}
+
+// Actualización de métricas globales
+private updateGlobalMetrics(currentMetrics: ServiceMetrics, responseTime: number) {
+  // Combinar métricas online y offline
+  Object.assign(this.metrics, {
+    hits: this.onlineMetrics.hits + this.offlineMetrics.hits,
+    misses: this.onlineMetrics.misses + this.offlineMetrics.misses,
+    totalOperations: this.onlineMetrics.totalOperations + this.offlineMetrics.totalOperations,
+    failedOperations: this.onlineMetrics.failedOperations + this.offlineMetrics.failedOperations,
+    online: this.onlineMetrics,
+    offline: this.offlineMetrics,
     
-    if (totalOps === 0) return 100;
-    return Number(((totalOps - totalFails) / totalOps * 100).toFixed(2));
+    // Validaciones en el cálculo de promedios
+    averageResponseTime: Number(
+      this.calculateMovingAverage(
+        this.metrics.averageResponseTime, 
+        responseTime, 
+        this.metrics.totalOperations || 1
+      ).toFixed(2)
+    ),
+    
+    lastResponseTime: responseTime,
+    successRate: this.calculateTotalSuccessRate(),
+    localCacheSize: this.localCache.size,
+    lastUpdated: new Date(),
+    
+    // Estado de conexión
+    connectionStatus: {
+      isConnected: this.serviceState === REDIS_SERVICE_STATE.CONNECTED,
+      consecutiveFailures: this.getDisplayedFailures(),
+      lastConnectionAttempt: new Date()
+    }
+  });
+
+  // Logging de depuración para rastrear métricas
+  this.logger.debug(`📊 Métricas actualizadas: ${JSON.stringify(this.metrics, null, 2)}`);
+}
+
+
+  // Cálculo de tasa de éxito con manejo de casos especiales
+private calculateSuccessRate(metrics: ServiceMetrics): number {
+  // Evitar división por cero
+  if (metrics.totalOperations <= 0) {
+    return 100;
   }
 
+  // Calcular tasa de éxito
+  const successRate = ((metrics.totalOperations - metrics.failedOperations) / 
+    metrics.totalOperations) * 100;
+
+  // Redondear y asegurar valor entre 0 y 100
+  return Number(Math.min(100, Math.max(0, successRate)).toFixed(2));
+}
+
+
+private validateResponseTime(time: number): number {
+  // Validación de tiempo de respuesta
+  const numTime = Number(time);
+  
+  if (isNaN(numTime) || numTime <= 0) {
+    this.logger.debug(`⚠️ Tiempo de respuesta inválido: ${time}. Usando valor mínimo.`);
+    return 0.1;
+  }
+
+  return numTime;
+}
+
+// Incremento seguro de contadores
+private safeIncrement(value: number): number {
+  // Asegurar que siempre sea un número positivo
+  const numValue = Number(value);
+  return isNaN(numValue) ? 1 : Math.max(1, numValue + 1);
+}
+
+// Cálculo de promedio móvil con validaciones
+private calculateMovingAverage(
+  currentAvg: number, 
+  newValue: number, 
+  totalCount: number
+): number {
+  // Convertir valores a números
+  const numCurrentAvg = Number(currentAvg);
+  const numNewValue = Number(newValue);
+  const numTotalCount = Number(totalCount);
+
+  // Validaciones
+  if (isNaN(numCurrentAvg) || numTotalCount <= 1) {
+    return numNewValue;
+  }
+
+  // Cálculo de promedio móvil
+  return ((numCurrentAvg * (numTotalCount - 1)) + numNewValue) / numTotalCount;
+}
+
+// Cálculo de tasa de éxito con manejo de casos especiales
+
+
+
+private calculateTotalSuccessRate(): number {
+  const onlineOps = this.onlineMetrics.totalOperations || 0;
+  const offlineOps = this.offlineMetrics.totalOperations || 0;
+  const totalOps = onlineOps + offlineOps;
+  
+  if (totalOps <= 0) {
+    return 100;
+  }
+
+  const onlineFails = this.onlineMetrics.failedOperations || 0;
+  const offlineFails = this.offlineMetrics.failedOperations || 0;
+  const totalFails = onlineFails + offlineFails;
+
+  const successRate = ((totalOps - totalFails) / totalOps) * 100;
+  return Number(Math.min(100, Math.max(0, successRate)).toFixed(2));
+}
 
   async get<T>(key: string): Promise<CacheResponse<T>> {
     const startTime = Date.now();
@@ -881,10 +960,6 @@ export class RedisService {
     };
   }
 
-  // private getKeyPattern(key: string): string {
-  //   return key.replace(/\d+/g, '');
-  // }
-
   private getKeyPattern(key: string): string {
     // Detectar patrones basados en CACHE_KEYS
     for (const [category, patterns] of Object.entries(CACHE_KEYS)) {
@@ -908,69 +983,8 @@ export class RedisService {
     return patterns;
   }
 
-  private async checkConnectionLoop() {
-    this.logger.debug('📡 Iniciando monitoreo de conexión con Redis...');
-    await this.checkConnection();
   
-    const runCheck = async () => {
-      this.logger.debug('🔄 Ejecutando checkConnection...');
-      await this.checkConnection();
-      this.connectionCheckInterval = setTimeout(runCheck, 10000);
-    };
   
-    runCheck();
-  }  
-
-  // async getDetailedMetrics(): Promise<DetailedCacheMetrics> {
-  //   const now = Date.now();
-  //   const totalHits = 0;
-  //   const oldestEntry = now;
-  //   const newestEntry = 0;
-  //   let memoryUsageEstimate = 0;
-  //   const patterns: Record<string, number> = {};
-
-  //   const entries = Array.from(this.localCache.entries()).map(([key, entry]) => {
-  //     const age = now - entry.timestamp;
-  //     const pattern = this.getKeyPattern(key);
-  //     patterns[pattern] = (patterns[pattern] || 0) + 1;
-      
-  //     // Estimación del tamaño en memoria
-  //     const entrySize = JSON.stringify(entry.data).length * 2;
-  //     memoryUsageEstimate += entrySize;
-
-  //     const expiresIn = entry.expiresAt ? entry.expiresAt - now : undefined;
-
-  //     return {
-  //       key,
-  //       hits: this.getHitsForKey(key),
-  //       age,
-  //       size: entrySize,
-  //       expiresIn: expiresIn > 0 ? expiresIn : undefined,
-  //       pattern,
-  //       metadata: entry.metadata
-  //     };
-  //   });
-
-  //   const metrics = await this.getMetrics();
-
-  //   return {
-  //     ...metrics,
-  //     localCache: {
-  //       size: this.localCache.size,
-  //       maxSize: REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE,
-  //       usagePercentage: (this.localCache.size / REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE) * 100,
-  //       oldestEntry: this.localCache.size > 0 ? oldestEntry : null,
-  //       newestEntry: this.localCache.size > 0 ? newestEntry : null,
-  //       hitRatio: this.calculateHitRatio(),
-  //       averageHits: this.calculateAverageHits(),
-  //       totalHits: this.getTotalHits(),
-  //       memoryUsageEstimate,
-  //       patterns
-  //     },
-  //     entries: entries.sort((a, b) => b.hits - a.hits)
-  //   };
-  // }
-
   async getDetailedMetrics(): Promise<DetailedCacheMetrics> {
     const now = Date.now();
     let memoryUsageEstimate = 0;

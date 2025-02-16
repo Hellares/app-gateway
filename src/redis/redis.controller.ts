@@ -213,9 +213,9 @@ async getDetailedMetrics() {
     
     return {
       key,
-      age,
-      expiresIn: expiresIn > 0 ? expiresIn : undefined,
-      size: JSON.stringify(entry.data).length,
+      age: this.formatDuration(age),
+      expiresIn: expiresIn > 0 ? this.formatDuration(expiresIn) : 'Expirado',
+      size: this.formatBytes(JSON.stringify(entry.data).length),
       metadata: entry.metadata || {},
       pattern: this.getKeyPattern(key)
     };
@@ -242,7 +242,7 @@ async getDetailedMetrics() {
       hitRatio,
       averageHits: metrics.hits / Math.max(localCache.size, 1),
       totalHits: metrics.hits,
-      memoryUsageEstimate: cacheDetails.summary.totalSize,
+      memoryUsageEstimate: this.formatBytes(cacheDetails.summary.totalSize),//this.formatBytes(cacheDetails.summary.totalSize),
       patterns: cacheDetails.summary.patterns
     },
     performance: {
