@@ -921,25 +921,79 @@ export class RedisService {
     runCheck();
   }  
 
+  // async getDetailedMetrics(): Promise<DetailedCacheMetrics> {
+  //   const now = Date.now();
+  //   const totalHits = 0;
+  //   const oldestEntry = now;
+  //   const newestEntry = 0;
+  //   let memoryUsageEstimate = 0;
+  //   const patterns: Record<string, number> = {};
+
+  //   const entries = Array.from(this.localCache.entries()).map(([key, entry]) => {
+  //     const age = now - entry.timestamp;
+  //     const pattern = this.getKeyPattern(key);
+  //     patterns[pattern] = (patterns[pattern] || 0) + 1;
+      
+  //     // Estimación del tamaño en memoria
+  //     const entrySize = JSON.stringify(entry.data).length * 2;
+  //     memoryUsageEstimate += entrySize;
+
+  //     const expiresIn = entry.expiresAt ? entry.expiresAt - now : undefined;
+
+  //     return {
+  //       key,
+  //       hits: this.getHitsForKey(key),
+  //       age,
+  //       size: entrySize,
+  //       expiresIn: expiresIn > 0 ? expiresIn : undefined,
+  //       pattern,
+  //       metadata: entry.metadata
+  //     };
+  //   });
+
+  //   const metrics = await this.getMetrics();
+
+  //   return {
+  //     ...metrics,
+  //     localCache: {
+  //       size: this.localCache.size,
+  //       maxSize: REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE,
+  //       usagePercentage: (this.localCache.size / REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE) * 100,
+  //       oldestEntry: this.localCache.size > 0 ? oldestEntry : null,
+  //       newestEntry: this.localCache.size > 0 ? newestEntry : null,
+  //       hitRatio: this.calculateHitRatio(),
+  //       averageHits: this.calculateAverageHits(),
+  //       totalHits: this.getTotalHits(),
+  //       memoryUsageEstimate,
+  //       patterns
+  //     },
+  //     entries: entries.sort((a, b) => b.hits - a.hits)
+  //   };
+  // }
+
   async getDetailedMetrics(): Promise<DetailedCacheMetrics> {
     const now = Date.now();
-    const totalHits = 0;
-    const oldestEntry = now;
-    const newestEntry = 0;
     let memoryUsageEstimate = 0;
     const patterns: Record<string, number> = {};
-
+    const metrics = await this.getMetrics();
+  
+    // Encontrar entrada más antigua y más nueva
+    let oldestTimestamp = now;
+    let newestTimestamp = 0;
+  
     const entries = Array.from(this.localCache.entries()).map(([key, entry]) => {
       const age = now - entry.timestamp;
+      oldestTimestamp = Math.min(oldestTimestamp, entry.timestamp);
+      newestTimestamp = Math.max(newestTimestamp, entry.timestamp);
+      
       const pattern = this.getKeyPattern(key);
       patterns[pattern] = (patterns[pattern] || 0) + 1;
       
-      // Estimación del tamaño en memoria
       const entrySize = JSON.stringify(entry.data).length * 2;
       memoryUsageEstimate += entrySize;
-
+  
       const expiresIn = entry.expiresAt ? entry.expiresAt - now : undefined;
-
+  
       return {
         key,
         hits: this.getHitsForKey(key),
@@ -950,26 +1004,52 @@ export class RedisService {
         metadata: entry.metadata
       };
     });
-
-    const metrics = await this.getMetrics();
-
+  
+    const performance = {
+      hits: metrics.hits,
+      misses: metrics.misses,
+      hitRatio: `${((metrics.hits / Math.max(metrics.totalOperations, 1)) * 100).toFixed(2)}%`,
+      averageResponseTime: `${metrics.averageResponseTime ? metrics.averageResponseTime.toFixed(2) : '0.00'}ms`,
+      successRate: `${metrics.successRate}%`,
+      status: metrics.connectionStatus.isConnected 
+        ? metrics.successRate >= 90 ? 'healthy' : 'degraded'
+        : 'unhealthy'
+    };
+  
     return {
       ...metrics,
+      status: 'success',
+      timestamp: new Date().toISOString(),
+      serviceState: metrics.connectionStatus.isConnected ? 'connected' : 'disconnected',
       localCache: {
         size: this.localCache.size,
         maxSize: REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE,
-        usagePercentage: (this.localCache.size / REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE) * 100,
-        oldestEntry: this.localCache.size > 0 ? oldestEntry : null,
-        newestEntry: this.localCache.size > 0 ? newestEntry : null,
+        usagePercentage: Number(((this.localCache.size / REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE) * 100).toFixed(2)),
+        oldestEntry: this.localCache.size > 0 ? oldestTimestamp : null,
+        newestEntry: this.localCache.size > 0 ? newestTimestamp : null,
         hitRatio: this.calculateHitRatio(),
         averageHits: this.calculateAverageHits(),
         totalHits: this.getTotalHits(),
         memoryUsageEstimate,
+        totalMemoryUsage: this.formatBytes(memoryUsageEstimate),
+        averageEntrySize: this.formatBytes(memoryUsageEstimate / Math.max(this.localCache.size, 1)),
         patterns
       },
-      entries: entries.sort((a, b) => b.hits - a.hits)
+      performance,
+      entries: entries.sort((a, b) => b.hits - a.hits),
+      timeOffline: metrics.timeOffline || 0,  // Aseguramos que sea número
+      lastUpdated: metrics.lastUpdated
     };
   }
+
+  // Método auxiliar para formatear bytes
+private formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+}
 
    
 

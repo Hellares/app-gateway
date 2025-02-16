@@ -34,6 +34,9 @@ export interface CacheMetrics {
 }
 
 export interface DetailedCacheMetrics extends CacheMetrics {
+  status: string;  // Añadido
+  serviceState: string;  // Añadido también si no existe
+  timestamp: string;  // Añadido
   localCache: {
     size: number;
     maxSize: number;
@@ -44,6 +47,8 @@ export interface DetailedCacheMetrics extends CacheMetrics {
     averageHits: number;
     totalHits: number;
     memoryUsageEstimate: number;
+    totalMemoryUsage?: string;    // Añadido
+    averageEntrySize?: string;    // Añadido
     patterns: Record<string, number>;
   };
   entries: Array<{
@@ -55,6 +60,14 @@ export interface DetailedCacheMetrics extends CacheMetrics {
     pattern: string;
     metadata?: any;
   }>;
+  performance?: {  // Añadido también
+    hits: number;
+    misses: number;
+    hitRatio: string;
+    averageResponseTime: string;
+    successRate: string;
+    status: string;
+  };
 }
 
 
