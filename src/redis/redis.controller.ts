@@ -1,11 +1,13 @@
-import { Controller, Get, Logger, Post } from '@nestjs/common';
+import { Controller, Get, Logger, Post, UseGuards } from '@nestjs/common';
 import { RedisService } from './redis.service';
 import { CacheMetrics } from './interfaces/cache-metrics.interface';
 import { CACHE_KEYS } from './constants/redis-cache.keys.contants';
 import { REDIS_GATEWAY_CONFIG } from './config/redis.constants';
+import { RateLimitGuard } from 'src/common/guards/rate-limit.guard';
 
 
 @Controller('redis')
+@UseGuards(RateLimitGuard)
 export class RedisController {
   private readonly logger = new Logger('RedisController');
   constructor(private readonly redisService: RedisService) {}
@@ -315,5 +317,6 @@ async verifyTestData() {
     }))
   };
 }
+
 
 }

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpStatus, Inject, InternalServerErrorException, Logger, NotFoundException, Param, ParseBoolPipe, ParseIntPipe, Post, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpStatus, Inject, InternalServerErrorException, Logger, NotFoundException, Param, ParseBoolPipe, ParseIntPipe, Post, Query, SetMetadata, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { catchError, firstValueFrom, timeout, TimeoutError } from 'rxjs';
@@ -10,28 +10,23 @@ import { RedisService } from 'src/redis/redis.service';
 import { CreateRubroDto } from './dto/create-rubro.dto';
 import { SERVICES } from 'src/transports/constants';
 import { Rubro } from './rubro.interface';
+import { REDIS_GATEWAY_CONFIG } from 'src/redis/config/redis.constants';
+import { RateLimitGuard } from 'src/common/guards/rate-limit.guard';
+import { RATE_LIMIT_PRESETS } from 'src/common/guards/rate-limit.config';
+
 
 @Controller('rubro')
+// @UseGuards(RateLimitGuard)
 export class RubroController {
+  
   private readonly logger = new Logger(RubroController.name);
   
-  // Configuración específica para el módulo de Rubros
-  private readonly CACHE_CONFIG = {
-    ttl: {
-      list: 3600,        // 1 hora para listas
-      single: 7200,      // 2 horas para registros individuales
-      deleted: 1800      // 30 minutos para elementos eliminados
-    },
-    invalidation: {
-      maxPaginationCache: 10  // Número máximo de páginas a invalidar
-    }
-  } as const;
 
   constructor(
     @Inject(SERVICES.COMPANY) private readonly rubroClient: ClientProxy,
     @Inject(SERVICES.FILES) private readonly filesClient: ClientProxy,
     private readonly redisService: RedisService,
-  ) {}
+  ) {}  
 
   @Post()
   @UseInterceptors(
@@ -53,6 +48,8 @@ export class RubroController {
       }
     })
   )
+  
+
   async create(
     @Body() createRubroDto: CreateRubroDto,
     @UploadedFile() icono?: Express.Multer.File,
@@ -69,7 +66,7 @@ export class RubroController {
         const fileResponse = await firstValueFrom(
           this.filesClient.send('file.upload', { 
             file: icono, 
-            provider: 'cloudinary' //! Cambiar a 'firebase' para usar Firebase Storage
+            provider: 'firebase' //! Cambiar a 'firebase' para usar Firebase Storage
           }).pipe(
             timeout(5000),
             catchError(err => {
@@ -136,68 +133,69 @@ export class RubroController {
   private async updateLocalCache() {
     // Limpiar la caché local
     await this.redisService.clearAll();
-  
-    // // Actualizar la caché local con el nuevo rubro
-    // await this.redisService.set(
-    //   CACHE_KEYS.RUBRO.PAGINATED(1, 10),
-    //   [rubro],
-    //   this.CACHE_CONFIG.ttl.list
-    // );
   }
 
   @Get()
-async findAllRubros(@Query() paginationDto: PaginationDto) {
+  // @UseGuards(RateLimitGuard)
+  // @SetMetadata('rateLimit', RATE_LIMIT_PRESETS.CRITICAL)
+  async findAllRubros(@Query() paginationDto: PaginationDto) {
+  const { page = 1, limit = 10 } = paginationDto;
+  const cacheKey = CACHE_KEYS.RUBRO.PAGINATED(page, limit);
+  
   try {
     
-    const { page = 1, limit = 10 } = paginationDto;
-    const cacheKey = CACHE_KEYS.RUBRO.PAGINATED(page, limit);
-
-    // 1. Intentar obtener de caché (Redis o local)
-    this.logger.debug(`🔍 Buscando rubros en caché: ${cacheKey}`);
+    // Agregar un lock para prevenir cache stampede
     const cachedData = await this.redisService.get(cacheKey);
-
-    // 2. Si hay datos en caché, retornarlos
-    if (cachedData.success && cachedData.data) {
-      this.logger.debug('✅ Datos encontrados en caché');
+    if (cachedData.success) {
+      // Si los datos están próximos a expirar (ej: menos de 1 minuto)
+      // refrescar asincrónicamente para el siguiente request
+      if (cachedData.details?.ttl && cachedData.details.ttl < 60) {
+        this.refreshCache(cacheKey, paginationDto).catch(err => 
+          this.logger.error('Error refreshing cache:', err)
+        );
+      }
       return FileUrlHelper.transformResponse<Rubro>(cachedData.data);
     }
 
-    // 3. Si no hay datos en caché, obtener de la base de datos
-    this.logger.debug('🔄 Caché miss - Obteniendo datos de la base de datos');
     const rubros = await firstValueFrom(
-      this.rubroClient.send('findAll.Rubro', paginationDto).pipe(
-        timeout(5000),
-        catchError(err => {
-          if (err instanceof TimeoutError) {
-            throw new RpcException({
-              message: 'El servicio no está respondiendo',
-              status: HttpStatus.GATEWAY_TIMEOUT
-            });
-          }
-          throw new RpcException(err);
-        })
-      )
+      this.rubroClient.send('findAll.Rubro', paginationDto)
     );
 
-    // 4. Si obtuvimos datos de la BD, guardarlos en caché
-    if (rubros) {
-      this.logger.debug('💾 Guardando nuevos datos en caché');
-      await this.redisService.set(
+    if(rubros) {
+      // Guardar en caché de forma asíncrona
+      this.redisService.set(
         cacheKey,
         rubros,
-        this.CACHE_CONFIG.ttl.list
-      ).catch(error => {
-        // Solo logueamos el error, no interrumpimos el flujo
-        this.logger.error('❌ Error guardando en caché:', error);
-      });
+        REDIS_GATEWAY_CONFIG.LOCAL_CACHE.TTL
+      ).catch(e => this.logger.error('Error caching:', e));
     }
 
     return FileUrlHelper.transformResponse<Rubro>(rubros);
   } catch (error) {
-    this.logger.error('❌ Error en findAllRubros:', error);
+    this.logger.error('Error en findAllRubros:', error);
+
     throw new RpcException(error);
   }
 }
+
+private async refreshCache(key: string, params: PaginationDto): Promise<void> {
+  const data = await firstValueFrom(
+    this.rubroClient.send('findAll.Rubro', params)
+  );
+  
+  if(data) {
+    await this.redisService.set(
+      key,
+      data,
+      //this.CACHE_CONFIG.ttl.list
+      REDIS_GATEWAY_CONFIG.LOCAL_CACHE.TTL
+    );
+  }
+}
+
+
+ 
+
 
 @Get('/deleted')
 async findDeletedRubros(@Query() paginationDto: PaginationDto) {
@@ -238,7 +236,7 @@ async findDeletedRubros(@Query() paginationDto: PaginationDto) {
       await this.redisService.set(
         cacheKey,
         rubros,
-        this.CACHE_CONFIG.ttl.deleted
+        // this.CACHE_CONFIG.ttl.deleted
       ).catch(error => {
         this.logger.error('❌ Error guardando en caché:', error);
       });
@@ -335,24 +333,16 @@ async findDeletedRubros(@Query() paginationDto: PaginationDto) {
     }
   }
 
+
   private async invalidateAllCaches(): Promise<void> {
     try {
-      const invalidationPromises = [
-        // Invalidar patrones completos
-        this.redisService.delete(CACHE_KEYS.RUBRO.PATTERN),
-        
-        // Invalidar cachés paginados
-        ...Array.from(
-          { length: this.CACHE_CONFIG.invalidation.maxPaginationCache }, 
-          (_, i) => this.redisService.delete(CACHE_KEYS.RUBRO.PAGINATED(i + 1, 20))
-        )
-      ];
-
-      await Promise.all(invalidationPromises).catch(error => {
-        this.logger.error('Error invalidando cachés:', error);
-      });
+      // Usar pattern matching de Redis en lugar de múltiples deletes
+      await this.redisService.delete(CACHE_KEYS.RUBRO.PATTERN);
+      
+      // Limpiar caché local
+      await this.redisService.clearAll();
     } catch (error) {
-      this.logger.error('Error en invalidación de caché:', error);
+      this.logger.error('Error en invalidación:', error);
     }
   }
 

@@ -1,5 +1,7 @@
 
 export const CACHE_KEYS = {
+
+  
   RUBRO: {
     // Keys base que pueden ser usadas directamente
     BASE: {

@@ -21,6 +21,7 @@ export class FileUrlHelper {
       default:
         return filename;
     }
+    return null;
   }
 
   static transformResponse<T extends { icono?: string }>(response: unknown): {
@@ -36,14 +37,16 @@ export class FileUrlHelper {
       metadata: any;
     };
     
-    const transformedData = typedResponse.data.map(item => ({
+  const transformedData = typedResponse.data.map(item => {
+    return {
       ...item,
       iconoUrl: item.icono ? this.getFileUrl(item.icono) : null
-    }));
-  
-    return {
-      data: transformedData,
-      metadata: typedResponse.metadata
     };
-  }
+  });
+
+  return {
+    data: transformedData,
+    metadata: typedResponse.metadata
+  };
+}
 }

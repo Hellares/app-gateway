@@ -1,4 +1,3 @@
-
 import { Get, Inject, Injectable, Logger } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 import { catchError, firstValueFrom, timeout, TimeoutError } from 'rxjs';
@@ -26,7 +25,7 @@ export class RedisService {
   private connectionCheckInterval: NodeJS.Timeout;
   private consecutiveFailures = 0;
   private lastOnlineTime?: Date;
-  private localCache: Map<string, LocalCacheEntry> = new Map();
+  localCache: Map<string, LocalCacheEntry> = new Map();
   private readonly serviceStartTime = Date.now();
 
   // Métricas separadas para online/offline
@@ -381,33 +380,31 @@ export class RedisService {
 
   async get<T>(key: string): Promise<CacheResponse<T>> {
     const startTime = Date.now();
+
     try {
       this.validateKey(key);
   
-      // Primero verificar caché local cuando Redis está conectado
-      if (this.serviceState === REDIS_SERVICE_STATE.CONNECTED) {
-        const localValue = this.getFromLocalCache<T>(key, startTime);
-        if (localValue.success) {
-          this.logger.debug(`💾 Cache hit local: ${key}`);
-          return localValue;
-        }
-  
-        // Si no está en local, obtener de Redis
-        const redisResponse = await this.getFromRedis<T>(key);
-        
-        // Si se encontró en Redis, guardar en caché local
-        if (redisResponse.success && redisResponse.data) {
-          this.logger.debug(`📝 Guardando en caché local desde Redis: ${key}`);
-          //await this.setInLocalCache(key, redisResponse.data, startTime, this.extractTTL(redisResponse));
-          await this.setInLocalCache(key, redisResponse.data, startTime, this.extractTTL(redisResponse));
-        }
-  
-        return redisResponse;
+      // 1. Primero verificar caché local
+      const localValue = this.getFromLocalCache<T>(key, startTime);
+      if (localValue.success) {
+        this.logger.debug(`💾 Cache hit local: ${key}`);
+        return localValue;
       }
   
-      // Si Redis está desconectado, usar solo caché local
-      this.logger.debug(`🔍 Redis desconectado - Usando caché local: ${key}`);
-      return this.getFromLocalCache<T>(key, startTime);
+      // 2. Si no está en local, buscar en Redis
+      const redisResponse = await this.getFromRedis<T>(key);
+      
+      // 3. Si se encontró en Redis, guardar en caché local
+      if (redisResponse.success && redisResponse.data) {
+        this.logger.debug(`📝 Guardando en caché local desde Redis: ${key}`);
+        this.setInLocalCache(
+          key, 
+          redisResponse.data, 
+          startTime, 
+          this.extractTTL(redisResponse)
+        );
+      }
+      return redisResponse;
   
     } catch (error) {
       if (error instanceof TimeoutError) {
@@ -443,12 +440,12 @@ export class RedisService {
   }
 
 
-  private getFromLocalCache<T>(key: string, startTime: number): CacheResponse<T> {
+  getFromLocalCache<T>(key: string, startTime: number): CacheResponse<T> {
     const entry = this.localCache.get(key);
     const now = Date.now();
   
-  //if (entry && entry.expiresAt > now) {
-    if (entry?.expiresAt > now) {
+  if (entry && entry.expiresAt > now) {
+
       this.updateMetrics('hit', now - startTime);
       return {
         success: true,
@@ -520,7 +517,7 @@ export class RedisService {
             { 
               key, 
               value, 
-              ttl: ttl || REDIS_GATEWAY_CONFIG.TTL.DEFAULT 
+              ttl: REDIS_GATEWAY_CONFIG.TTL.DEFAULT 
             }
           ).pipe(timeout(this.timeoutMs))
         );
@@ -552,7 +549,7 @@ export class RedisService {
 
 
 
-  private setInLocalCache(key: string, value: any, startTime: number, ttl?: number): CacheResponse {
+  setInLocalCache(key: string, value: any, startTime: number, ttl?: number): CacheResponse {
     this.logger.debug(`🔄 Iniciando guardado en caché local - Key: ${key}`);
     
     // Verificar y limpiar si es necesario
@@ -563,7 +560,7 @@ export class RedisService {
     }
   
     // Calcular TTL
-    const expiresAt = Date.now() + ((ttl || REDIS_GATEWAY_CONFIG.LOCAL_CACHE.TTL) * 1000);
+    const expiresAt = Date.now() + ((REDIS_GATEWAY_CONFIG.LOCAL_CACHE.TTL) * 1000);
     
     // Guardar en caché local
     this.localCache.set(key, {
@@ -922,7 +919,7 @@ export class RedisService {
     };
   }
 
-  
+   
 
   private getHitsForKey(key: string): number {
     const metrics = this.metrics.online?.hits || 0;

@@ -17,7 +17,6 @@ import { FilesModule } from './files/files.module';
     RedisModule,
     PlansModule,
     FilesModule,
-    
   ],
 })
 export class AppModule {}
