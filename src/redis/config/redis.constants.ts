@@ -57,7 +57,7 @@ export const REDIS_GATEWAY_CONFIG = {
   MONITORING: {
     PRODUCTION: {
       CHECK_INTERVAL: 30000,      // 30 segundos
-      DETAILED_LOGGING: false,    // Sin logs detallados
+      DETAILED_LOGGING: true,    // Sin logs detallados
     },
     DEVELOPMENT: {
       CHECK_INTERVAL: 10000,      // 10 segundos

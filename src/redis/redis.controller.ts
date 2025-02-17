@@ -62,12 +62,20 @@ async checkHealth() {
   }
 
   private getHealthStatus(metrics: CacheMetrics): string {
+    // Si está desconectado, mantener el mensaje actual
     if (!metrics.connectionStatus.isConnected) {
       return `disconnected (${metrics.timeOffline ? 'offline por ' + this.formatTime(metrics.timeOffline) : 'tiempo desconocido'})`;
     }
+  
+    // Verificar tasa de éxito primero
     if (metrics.online.successRate < 90) return 'degraded';
-    if (metrics.online.averageResponseTime > 100) return 'slow';
-    return 'healthy';
+  
+    // Nuevos umbrales de tiempo de respuesta para entorno distribuido
+    const avgTime = metrics.online.averageResponseTime;
+    if (avgTime > 1000) return 'critical';    // > 1 segundo
+    if (avgTime > 500) return 'slow';         // > 500ms
+    if (avgTime > 300) return 'normal';       // > 300ms
+    return 'healthy';                         // < 300ms
   }
 
   private formatTime(ms: number): string {
