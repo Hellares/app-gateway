@@ -13,12 +13,17 @@ import {
 import { LocalCacheEntry } from './interfaces/local-cache.interface';
 import { HealthCheckResponse } from './interfaces/health-check.interface';
 import { CACHE_KEYS } from './constants/redis-cache.keys.contants';
+import { envs } from 'src/config';
 
 
 
 @Injectable()
 export class RedisService {
   private readonly logger = new Logger('RedisService');
+  private readonly config = envs.isProduction 
+    ? REDIS_GATEWAY_CONFIG.MONITORING.PRODUCTION 
+    : REDIS_GATEWAY_CONFIG.MONITORING.DEVELOPMENT;
+
   private readonly timeoutMs = REDIS_GATEWAY_CONFIG.TIMEOUTS.OPERATION;
   private serviceState = REDIS_SERVICE_STATE.DISCONNECTED;
   private healthCheckInterval: NodeJS.Timeout;
@@ -49,12 +54,10 @@ export class RedisService {
       lastConnectionAttempt: new Date()
     },
   };
-
-  
-
   
   constructor(
     @Inject(SERVICES.REDIS) private readonly cacheClient: ClientProxy,
+    
   ) {}
 
   async onModuleInit() {
@@ -78,9 +81,7 @@ export class RedisService {
       failedOperations: 0,
       successRate: 100,
     };
-
   }
-
 
   private async initializeService() {
     try {
@@ -89,7 +90,7 @@ export class RedisService {
   
       await this.cacheClient.connect();
       // const healthCheck = await this.healthCheck();
-      await this.checkConnectionLoop();
+      await this.startConnectionMonitoring();
   
       // if (healthCheck.status !== 'healthy') throw new Error('Health check inicial fallido');
   
@@ -106,32 +107,7 @@ export class RedisService {
       this.attemptReconnection();
     }
   }
-
-  private async checkConnectionLoop() {
-    this.logger.debug('📡 Iniciando monitoreo de conexión con Redis...');
-    await this.checkConnection();
-  
-    const runCheck = async () => {
-      this.logger.debug('🔄 Ejecutando checkConnection...');
-      await this.checkConnection();
-      this.connectionCheckInterval = setTimeout(runCheck, 10000);
-    };
-  
-    runCheck();
-  }  
-
-  private async startConnectionMonitoring() {
-    this.logger.debug('📡 Iniciando monitoreo de conexión con Redis...');
-    await this.checkConnection();
-    
-    this.connectionCheckInterval = setInterval(async () => {
-      this.logger.debug('🔄 Ejecutando checkConnection...');
-      await this.checkConnection();
-    }, 10000);
-  }
-
  
-
   private startHealthCheck() {
     if (REDIS_GATEWAY_CONFIG.HEALTH_CHECK.ENABLED) {
       this.healthCheckInterval = setInterval(async () => {
@@ -200,15 +176,16 @@ export class RedisService {
     if (this.serviceState === REDIS_SERVICE_STATE.CONNECTING) {
       return;
     }
-
+  
     this.logger.log('🔄 Iniciando reconexión...');
     this.serviceState = REDIS_SERVICE_STATE.CONNECTING;
-
+  
     setTimeout(async () => {
       try {
         const healthCheck = await this.healthCheck();
         if (healthCheck.status === 'healthy') {
           this.logger.log('✅ Reconexión exitosa');
+          await this.handleReconnection(); // Limpieza y reinicio al reconectar
           this.serviceState = REDIS_SERVICE_STATE.CONNECTED;
           this.consecutiveFailures = 0;
           this.lastOnlineTime = new Date();
@@ -232,12 +209,17 @@ export class RedisService {
     if (!REDIS_GATEWAY_CONFIG.PATTERNS.VALID_KEY_REGEX.test(key)) {
       throw new Error('La key contiene caracteres no válidos');
     }
-  }
+  }  
 
   private async checkConnection() {
     try {
-      this.logger.debug('🔍 Verificando conexión con Redis...');
-          const response = await firstValueFrom(
+      const wasConnected = this.serviceState === REDIS_SERVICE_STATE.CONNECTED;
+      
+      if (envs.isDevelopment) {
+        this.logger.debug('🔍 Verificando conexión con Redis...');
+      }
+  
+      const response = await firstValueFrom(
         this.cacheClient.send(
           { cmd: REDIS_GATEWAY_CONFIG.COMMANDS.HEALTH }, 
           {}
@@ -245,79 +227,107 @@ export class RedisService {
       );
   
       if (response.status !== 'healthy') {
-        throw new Error('Health check indica estado unhealthy');
+        this.logger.warn('Health check indica estado unhealthy');
+        return;
       }
   
-      if (this.serviceState !== REDIS_SERVICE_STATE.CONNECTED) {
+      // Si estábamos desconectados y ahora nos reconectamos
+      if (!wasConnected) {
         this.logger.log('✅ Conexión con Redis restablecida');
-        await this.handleReconnection();
+        await this.handleReconnection(); // Limpieza y reinicio al reconectar
       }
   
-      Object.assign(this, {
-        serviceState: REDIS_SERVICE_STATE.CONNECTED,
-        lastOnlineTime: new Date(),
-        consecutiveFailures: 0
-      });
+      this.serviceState = REDIS_SERVICE_STATE.CONNECTED;
+      this.consecutiveFailures = 0;
+      this.lastOnlineTime = new Date();
   
     } catch (error) {
-      await this.handleConnectionFailure(error);
+      this.handleConnectionFailure(error);
     }
   }
 
-  private async handleReconnection() {
-    this.logger.log('🔄 Iniciando proceso de reconexión...');
-    
-    try {
-      // Limpiar caché local primero
-      this.localCache.clear();
-      this.logger.log('🧹 Caché local limpiado');
+  // Método unificado de monitoreo
+private async startConnectionMonitoring() {
+  const config = envs.isProduction 
+    ? REDIS_GATEWAY_CONFIG.MONITORING.PRODUCTION 
+    : REDIS_GATEWAY_CONFIG.MONITORING.DEVELOPMENT;
+
+  await this.checkConnection();
   
-      // Intentar limpiar Redis
-      const response = await firstValueFrom(
-        this.cacheClient.send(
-          { cmd: REDIS_GATEWAY_CONFIG.COMMANDS.CLEAR }, 
-          {}
-        ).pipe(
-          timeout(REDIS_GATEWAY_CONFIG.TIMEOUTS.OPERATION)
-        )
-      );
-  
-      if (response.success) {
-        this.logger.log('🧹 Redis limpiado correctamente');
-      } else {
-        throw new Error('Fallo al limpiar Redis');
-      }
-  
-      // Reinicializar métricas con todas las propiedades requeridas
-      const baseMetrics = this.initializeServiceMetrics();
-      this.metrics = {
-        ...baseMetrics,
-        localCacheSize: this.localCache.size,
-        lastUpdated: new Date(),
-        connectionStatus: {
-          isConnected: true,
-          consecutiveFailures: 0,
-          lastConnectionAttempt: new Date()
-        },
-        online: {
-          ...baseMetrics,
-          successRate: 100
-        },
-        offline: {
-          ...baseMetrics,
-          successRate: 100
-        },
-        lastOnlineTime: new Date(),
-        timeOffline: 0,
-        timeOfflineFormatted: '0s'
-      };
-      
-      this.logger.log('✅ Reconexión completada exitosamente');
-    } catch (error) {
-      this.logger.error('❌ Error durante la reconexión:', error);
-      throw error;
-    }
+  if (envs.isDevelopment) {
+    this.logger.debug('📡 Iniciando monitoreo de conexión con Redis...');
   }
+
+  // Limpiamos el intervalo anterior si existe
+  if (this.connectionCheckInterval) {
+    clearInterval(this.connectionCheckInterval);
+  }
+
+  this.connectionCheckInterval = setInterval(
+    () => this.checkConnection(),
+    config.CHECK_INTERVAL
+  );
+
+  // Log solo en desarrollo
+  if (envs.isDevelopment) {
+    this.logger.debug(`🕒 Intervalo de monitoreo configurado: ${config.CHECK_INTERVAL}ms`);
+  }
+}
+
+private async handleReconnection() {
+  this.logger.log('🔄 Iniciando proceso de reconexión y limpieza...');
+  
+  try {
+    // 1. Limpiar caché local primero
+    this.localCache.clear();
+    this.logger.log('🧹 Caché local limpiado');
+
+    // 2. Intentar limpiar Redis
+    const response = await firstValueFrom(
+      this.cacheClient.send(
+        { cmd: REDIS_GATEWAY_CONFIG.COMMANDS.CLEAR }, 
+        {}
+      ).pipe(
+        timeout(REDIS_GATEWAY_CONFIG.TIMEOUTS.OPERATION)
+      )
+    );
+
+    if (response.success) {
+      this.logger.log('🧹 Redis limpiado correctamente');
+    } else {
+      throw new Error('Fallo al limpiar Redis');
+    }
+
+    // 3. Reinicializar métricas
+    const baseMetrics = this.initializeServiceMetrics();
+    this.metrics = {
+      ...baseMetrics,
+      localCacheSize: this.localCache.size,
+      lastUpdated: new Date(),
+      connectionStatus: {
+        isConnected: true,
+        consecutiveFailures: 0,
+        lastConnectionAttempt: new Date()
+      },
+      online: {
+        ...baseMetrics,
+        successRate: 100
+      },
+      offline: {
+        ...baseMetrics,
+        successRate: 100
+      },
+      lastOnlineTime: new Date(),
+      timeOffline: 0,
+      timeOfflineFormatted: '0s'
+    };
+    
+    this.logger.log('✅ Reconexión y limpieza completada exitosamente');
+  } catch (error) {
+    this.logger.error('❌ Error durante la reconexión y limpieza:', error);
+    throw error;
+  }
+}
   
   private async handleConnectionFailure(error: Error) {
     this.consecutiveFailures++;
@@ -342,28 +352,29 @@ export class RedisService {
     }
   }
 
-private updateMetrics(operation: 'hit' | 'miss', responseTime: number, failed = false) {
-  try {
-    const validResponseTime = this.validateResponseTime(responseTime);
-    const metrics = this.getCurrentMetrics();
-
-    this.updateMetricsForCurrentState(metrics, operation, validResponseTime, failed);
-    this.updateGlobalMetrics(metrics, validResponseTime);
-
-    // this.logger.debug('Métricas actualizadas', {
-    //   operation,
-    //   responseTime: validResponseTime,
-    //   failed,
-    //   currentMetrics: this.metrics
-    // });
-  } catch (error) {
-    this.logger.error('Error actualizando métricas', { 
-      error, 
-      operation, 
-      responseTime 
-    });
+  private updateMetrics(operation: 'hit' | 'miss' | 'health_check', responseTime: number, failed = false) {
+    // Ignorar health checks en las métricas
+    if (operation === 'health_check') return;
+  
+    try {
+      const validResponseTime = this.validateResponseTime(responseTime);
+      const metrics = this.getCurrentMetrics();
+  
+      this.updateMetricsForCurrentState(metrics, operation, validResponseTime, failed);
+      this.updateGlobalMetrics(metrics, validResponseTime);
+  
+      // Solo loguear métricas detalladas en desarrollo
+      if (envs.isDevelopment && this.config.DETAILED_LOGGING) {
+        this.logger.debug(`📊 Métricas actualizadas: ${JSON.stringify(this.metrics, null, 2)}`);
+      }
+    } catch (error) {
+      this.logger.error('Error actualizando métricas', { 
+        error, 
+        operation, 
+        responseTime 
+      });
+    }
   }
-}
 
 private getCurrentMetrics(): ServiceMetrics {
   return this.serviceState === REDIS_SERVICE_STATE.CONNECTED 
@@ -379,10 +390,14 @@ private updateMetricsForCurrentState(
 ) {
   metrics.totalOperations = this.safeIncrement(metrics.totalOperations);
   metrics.lastResponseTime = responseTime;
-  metrics.averageResponseTime = this.calculateMovingAverage(
-    metrics.averageResponseTime, 
-    responseTime, 
-    metrics.totalOperations
+  
+  // Aplicamos el redondeo aquí para mantener consistencia
+  metrics.averageResponseTime = Number(
+    this.calculateMovingAverage(
+      metrics.averageResponseTime, 
+      responseTime, 
+      metrics.totalOperations
+    ).toFixed(2)  // Redondeamos a 2 decimales como en las métricas globales   
   );
 
   if (failed) {
@@ -396,6 +411,41 @@ private updateMetricsForCurrentState(
 }
 
 // Actualización de métricas globales
+// private updateGlobalMetrics(currentMetrics: ServiceMetrics, responseTime: number) {
+//   Combinar métricas online y offline
+//   Object.assign(this.metrics, {
+//     hits: this.onlineMetrics.hits + this.offlineMetrics.hits,
+//     misses: this.onlineMetrics.misses + this.offlineMetrics.misses,
+//     totalOperations: this.onlineMetrics.totalOperations + this.offlineMetrics.totalOperations,
+//     failedOperations: this.onlineMetrics.failedOperations + this.offlineMetrics.failedOperations,
+//     online: this.onlineMetrics,
+//     offline: this.offlineMetrics,
+    
+//     Validaciones en el cálculo de promedios
+//     averageResponseTime: Number(
+//       this.calculateMovingAverage(
+//         this.metrics.averageResponseTime, 
+//         responseTime, 
+//         this.metrics.totalOperations || 1
+//       ).toFixed(2)
+//     ),
+    
+//     lastResponseTime: responseTime,
+//     successRate: this.calculateTotalSuccessRate(),
+//     localCacheSize: this.localCache.size,
+//     lastUpdated: new Date(),
+    
+//     Estado de conexión
+//     connectionStatus: {
+//       isConnected: this.serviceState === REDIS_SERVICE_STATE.CONNECTED,
+//       consecutiveFailures: this.getDisplayedFailures(),
+//       lastConnectionAttempt: new Date()
+//     }
+//   });
+
+//   Logging de depuración para rastrear métricas
+//   this.logger.debug(`📊 Métricas actualizadas: ${JSON.stringify(this.metrics, null, 2)}`);
+// }
 private updateGlobalMetrics(currentMetrics: ServiceMetrics, responseTime: number) {
   // Combinar métricas online y offline
   Object.assign(this.metrics, {
@@ -406,12 +456,11 @@ private updateGlobalMetrics(currentMetrics: ServiceMetrics, responseTime: number
     online: this.onlineMetrics,
     offline: this.offlineMetrics,
     
-    // Validaciones en el cálculo de promedios
+    // Usar el mismo promedio que las métricas online cuando está conectado
     averageResponseTime: Number(
-      this.calculateMovingAverage(
-        this.metrics.averageResponseTime, 
-        responseTime, 
-        this.metrics.totalOperations || 1
+      (this.serviceState === REDIS_SERVICE_STATE.CONNECTED 
+        ? this.onlineMetrics.averageResponseTime 
+        : this.offlineMetrics.averageResponseTime
       ).toFixed(2)
     ),
     
@@ -420,7 +469,6 @@ private updateGlobalMetrics(currentMetrics: ServiceMetrics, responseTime: number
     localCacheSize: this.localCache.size,
     lastUpdated: new Date(),
     
-    // Estado de conexión
     connectionStatus: {
       isConnected: this.serviceState === REDIS_SERVICE_STATE.CONNECTED,
       consecutiveFailures: this.getDisplayedFailures(),
@@ -428,8 +476,10 @@ private updateGlobalMetrics(currentMetrics: ServiceMetrics, responseTime: number
     }
   });
 
-  // Logging de depuración para rastrear métricas
-  this.logger.debug(`📊 Métricas actualizadas: ${JSON.stringify(this.metrics, null, 2)}`);
+  // Solo loguear en desarrollo
+  if (envs.isDevelopment && this.config.DETAILED_LOGGING) {
+    this.logger.debug(`📊 Métricas actualizadas: ${JSON.stringify(this.metrics, null, 2)}`);
+  }
 }
 
 
@@ -450,12 +500,12 @@ private calculateSuccessRate(metrics: ServiceMetrics): number {
 
 
 private validateResponseTime(time: number): number {
-  // Validación de tiempo de respuesta
   const numTime = Number(time);
   
-  if (isNaN(numTime) || numTime <= 0) {
-    this.logger.debug(`⚠️ Tiempo de respuesta inválido: ${time}. Usando valor mínimo.`);
-    return 0.1;
+  // Validar rangos razonables
+  if (isNaN(numTime) || numTime <= 0 || numTime > 10000) {
+    this.logger.debug(`⚠️ Tiempo de respuesta inválido: ${time}. Usando último promedio válido.`);
+    return this.metrics.averageResponseTime || 200; // valor por defecto razonable
   }
 
   return numTime;
@@ -474,28 +524,30 @@ private calculateMovingAverage(
   newValue: number, 
   totalCount: number
 ): number {
-  // Validaciones de seguridad
-  if (totalCount <= 0) return newValue;
-  
-  // Conversión explícita a número
+  // Si es el primer valor
+  if (totalCount <= 1) return Number(newValue.toFixed(2));
+
+  // Validaciones de valores
+  if (newValue <= 0 || newValue > 10000) {
+    return Number(currentAvg.toFixed(2));
+  }
+
   const currentAvgNum = Number(currentAvg);
   const newValueNum = Number(newValue);
 
-  // Prevenir desbordamiento
-  if (
-    !isFinite(currentAvgNum) || 
-    !isFinite(newValueNum) || 
-    isNaN(currentAvgNum) || 
-    isNaN(newValueNum)
-  ) {
-    return newValueNum;
+  // Si el promedio actual no es válido, usar el nuevo valor
+  if (!isFinite(currentAvgNum) || isNaN(currentAvgNum)) {
+    return Number(newValueNum.toFixed(2));
   }
 
-  // Cálculo seguro
-  const average = ((currentAvgNum * (totalCount - 1)) + newValueNum) / totalCount;
+  // Factor de peso para el promedio móvil exponencial
+  const alpha = 0.1;  // 10% de peso para nuevos valores
+  
+  // Cálculo del promedio móvil exponencial (EMA)
+  const ema = (newValueNum * alpha) + (currentAvgNum * (1 - alpha));
 
-  // Limitar a un rango razonable
-  return Math.min(Math.max(average, 0), 10000);
+  // Limitar el resultado entre 0 y 3000ms y redondear a 2 decimales
+  return Number(Math.min(Math.max(ema, 0), 3000).toFixed(2));
 }
 
 // Cálculo de tasa de éxito con manejo de casos especiales

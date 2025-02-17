@@ -1,5 +1,7 @@
 // src/redis/config/redis-gateway.constants.ts
 
+import { envs } from "src/config";
+
 export const REDIS_GATEWAY_CONFIG = {
   // Comandos RMQ para Redis
   COMMANDS: {
@@ -26,15 +28,7 @@ export const REDIS_GATEWAY_CONFIG = {
     TTL: 600             // 10 minutos de TTL para entradas locales
   },
 
-  // Health check de microservicio
-  HEALTH_CHECK: {
-    ENABLED: true,
-    INTERVAL: 30000,      // 30 segundos entre checks
-    TIMEOUT: 3000,        // 1 segundo de timeout para health check
-    MAX_CONSECUTIVE_FAILURES: 3  // Número de fallos antes de considerar servicio caído
-  },
-
-  // Configuración de reintentos mejorada
+    // Configuración de reintentos mejorada
   ERROR_HANDLING: {
     MAX_RETRIES: 5,
     MAX_DISPLAYED_FAILURES: 5,    // Máximo de fallos a mostrar
@@ -58,7 +52,26 @@ export const REDIS_GATEWAY_CONFIG = {
     KEY_SEPARATOR: ':',
     VALID_KEY_REGEX: /^[\w:.-]+$/,
     MAX_KEY_LENGTH: 512
-  }
+  },
+
+  MONITORING: {
+    PRODUCTION: {
+      CHECK_INTERVAL: 30000,      // 30 segundos
+      DETAILED_LOGGING: false,    // Sin logs detallados
+    },
+    DEVELOPMENT: {
+      CHECK_INTERVAL: 10000,      // 10 segundos
+      DETAILED_LOGGING: true,     // Logs detallados
+    }
+  },
+
+  // Health check de microservicio
+  HEALTH_CHECK: {
+    ENABLED: true,
+    INTERVAL: envs.isProduction ? 30000 : 10000,
+    TIMEOUT: 3000,        // 1 segundo de timeout para health check
+    MAX_CONSECUTIVE_FAILURES: 3  // Número de fallos antes de considerar servicio caído
+  },
 } as const;
 
 // Estados de conexión con el microservicio
