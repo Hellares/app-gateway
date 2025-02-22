@@ -1,16 +1,7 @@
 import { Catch, ArgumentsHost, ExceptionFilter, Logger, HttpStatus } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { Observable, throwError } from 'rxjs';
-
-export interface RpcErrorResponse {
-  status?: number;
-  message?: string;
-  error?: string;
-  timestamp?: string;
-  path?: string;
-  code?: string;
-  details?: any;
-}
+import { ErrorResponse } from '../interfaces/error-response.interface';
 
 @Catch(RpcException)
 export class RpcCustomExceptionFilter implements ExceptionFilter {
@@ -18,18 +9,20 @@ export class RpcCustomExceptionFilter implements ExceptionFilter {
 
   catch(exception: RpcException, host: ArgumentsHost): Observable<any> {
     const rpcError = exception.getError();
-    let errorResponse: RpcErrorResponse = {
+    let errorResponse: ErrorResponse = {
+      status: HttpStatus.INTERNAL_SERVER_ERROR,
+      message: 'Error interno del servidor',
+      code: 'INTERNAL_SERVER_ERROR',
       timestamp: new Date().toISOString(),
-      path: this.getPath(host)
     };
 
     try {
       if (typeof rpcError === 'string') {
-        errorResponse = this.handleStringError(rpcError, errorResponse);
+        errorResponse = this.handleStringError(rpcError);
       } else if (this.isObjectError(rpcError)) {
-        errorResponse = this.handleObjectError(rpcError, errorResponse);
+        errorResponse = this.handleObjectError(rpcError);
       } else if (rpcError instanceof Error) {
-        errorResponse = this.handleNativeError(rpcError, errorResponse);
+        errorResponse = this.handleNativeError(rpcError);
       }
 
       this.logError(errorResponse);
@@ -43,50 +36,47 @@ export class RpcCustomExceptionFilter implements ExceptionFilter {
       return throwError(() => errorResponse);
 
     } catch (error) {
-      this.logger.error('Error inesperado en el filtro de excepciones:', error);
-      return throwError(() => ({
+      const fallbackError: ErrorResponse = {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         message: 'Error interno del servidor',
+        error: 'Error Inesperado',
+        code: 'INTERNAL_SERVER_ERROR',
         timestamp: new Date().toISOString()
-      }));
+      };
+      
+      this.logger.error('Error inesperado en el filtro de excepciones:', error);
+      return throwError(() => fallbackError);
     }
   }
 
-  protected handleStringError(error: string, baseResponse: RpcErrorResponse): RpcErrorResponse {
-    if (error.includes('Empty response')) {
-      return {
-        ...baseResponse,
-        status: HttpStatus.INTERNAL_SERVER_ERROR,
-        message: error.substring(0, error.indexOf('(') - 1),
-        code: 'EMPTY_RESPONSE'
-      };
-    }
-
+  protected handleStringError(error: string): ErrorResponse {
     return {
-      ...baseResponse,
       status: HttpStatus.BAD_REQUEST,
       message: error,
-      code: 'RPC_ERROR'
+      error: 'Error de Validación',
+      code: 'VALIDATION_ERROR',
+      timestamp: new Date().toISOString()
     };
   }
 
-  protected handleObjectError(error: any, baseResponse: RpcErrorResponse): RpcErrorResponse {
+  protected handleObjectError(error: any): ErrorResponse {
     return {
-      ...baseResponse,
       status: this.getStatusCode(error.status),
       message: error.message || 'Error desconocido',
-      //error: error.error,
-      code: error.code || 'UNKNOWN_ERROR',
+      error: error.error || 'Error de Inesperado',
+      code: error.code || 'APPLICATION_ERROR',
+      timestamp: new Date().toISOString(),
       details: error.details
     };
   }
 
-  protected handleNativeError(error: Error, baseResponse: RpcErrorResponse): RpcErrorResponse {
+  protected handleNativeError(error: Error): ErrorResponse {
     return {
-      ...baseResponse,
       status: HttpStatus.INTERNAL_SERVER_ERROR,
       message: error.message,
-      //error: error.name,
+      error: error.name || 'Error del Sistema',
+      code: 'SYSTEM_ERROR',
+      timestamp: new Date().toISOString(),
       details: error.stack
     };
   }
@@ -115,7 +105,7 @@ export class RpcCustomExceptionFilter implements ExceptionFilter {
     }
   }
 
-  protected logError(error: RpcErrorResponse): void {
+  protected logError(error: ErrorResponse): void {
     this.logger.error('RPC Exception:', {
       ...error,
       context: 'RpcExceptionFilter'

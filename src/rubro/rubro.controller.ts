@@ -5,7 +5,7 @@ import { catchError, firstValueFrom, timeout, TimeoutError } from 'rxjs';
 import { CACHE_KEYS } from 'src/redis/constants/redis-cache.keys.contants';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { FileUrlHelper } from 'src/files/common/helpers/file-url.helper';
-import { FILE_CONFIG } from 'src/files/common/validator/file.validator';
+import { FILE_CONFIG, FILE_VALIDATION } from 'src/files/common/constants/file.validator.constant';
 import { RedisService } from 'src/redis/redis.service';
 import { CreateRubroDto } from './dto/create-rubro.dto';
 import { SERVICES } from 'src/transports/constants';
@@ -13,6 +13,10 @@ import { Rubro } from './rubro.interface';
 import { REDIS_GATEWAY_CONFIG } from 'src/redis/config/redis.constants';
 import { RateLimitGuard } from 'src/common/guards/rate-limit.guard';
 import { RATE_LIMIT_PRESETS } from 'src/common/guards/rate-limit.config';
+import { FileValidator } from 'src/files/common/validator/file.validator';
+import { FileType } from 'src/files/common/constants/file-types.constant';
+import { FileErrorCode, FileErrorHelper } from 'src/files/common/helpers/file-error.helper';
+import { UploadFile } from 'src/files/common/decorators/file-upload.decorator';
 
 
 @Controller('rubro')
@@ -28,112 +32,126 @@ export class RubroController {
     private readonly redisService: RedisService,
   ) {}  
 
+
+
   @Post()
-  @UseInterceptors(
-    FileInterceptor('icono', {
-      limits: {
-        fileSize: FILE_CONFIG.maxSize
-      },
-      fileFilter: (req, file, cb) => {
-        if (!FILE_CONFIG.allowedMimeTypes.includes(file.mimetype)) {
-          return cb(
-            new RpcException({
-              message: 'Formato de archivo no permitido. Use: JPG, PNG, GIF o WEBP',
-              status: HttpStatus.BAD_REQUEST
-            }), 
-            false
-          );
-        }
-        cb(null, true);
-      }
-    })
-  )
-  
+@UploadFile('icono', FileType.CATEGORY) //! aqui se asigna el tipo de archivo y se evalua su tamaño
+async create(
+  @Body() createRubroDto: CreateRubroDto,
+  @UploadedFile() icono?: Express.Multer.File,
+) {
+  let uploadedFileName: string | null = null;
 
-  async create(
-    @Body() createRubroDto: CreateRubroDto,
-    @UploadedFile() icono?: Express.Multer.File,
-  ) {
-    try {
-      if (icono) {
-        if (icono.size > FILE_CONFIG.maxSize) {
-          throw new RpcException({
-            message: 'El archivo excede el tamaño máximo permitido de 2MB',
-            status: HttpStatus.BAD_REQUEST
-          });
-        }
-
+  try {
+    // Subir archivo si existe
+    if (icono) {
+      try {
         const fileResponse = await firstValueFrom(
           this.filesClient.send('file.upload', { 
             file: icono, 
-            provider: 'firebase' //! Cambiar a 'firebase' para usar Firebase Storage
+            provider: 'firebase', //! Usar cloudinary - firebase
+            type: FileType.CATEGORY //! Usar la categoria o tipo de archivo segun validacion de FILE_CONFIG.types.category
           }).pipe(
-            timeout(5000),
-            catchError(err => {
-              if (err instanceof TimeoutError) {
-                throw new RpcException({
-                  message: 'Error al subir el archivo: Timeout',
-                  status: HttpStatus.GATEWAY_TIMEOUT
-                });
-              }
-              throw new RpcException({
-                message: 'Error al subir el archivo',
-                status: HttpStatus.INTERNAL_SERVER_ERROR
-              });
+            timeout(FILE_VALIDATION.TIMEOUT), // Usar constante de timeout
+            catchError(error => {
+              throw FileErrorHelper.handleUploadError(error, icono.originalname);
             })
           )
         );
 
-        if (!fileResponse?.filename) {
-          throw new RpcException({
-            message: 'Error al procesar el archivo',
-            status: HttpStatus.INTERNAL_SERVER_ERROR
-          });
-        }
-
-        if (fileResponse.provider === 'firebase') {
-          const filename = fileResponse.filename.split('/').pop().split('?')[0];
-          createRubroDto.icono = filename;
-        } else {
-          const urlParts = new URL(fileResponse.filename);
-          const pathParts = urlParts.pathname.split('/');
-          createRubroDto.icono = pathParts[pathParts.length - 1];
-        }
+        uploadedFileName = this.extractFileName(fileResponse);
+        createRubroDto.icono = uploadedFileName;
+      } catch (error) {
+        throw FileErrorHelper.handleUploadError(error, icono.originalname);
       }
+    }
 
+    // Crear el rubro
+    try {
       const result = await firstValueFrom(
         this.rubroClient.send('create.Rubro', createRubroDto).pipe(
-          timeout(5000),
-          catchError(err => {
-            if (err instanceof TimeoutError) {
-              throw new RpcException({
-                message: 'El servicio no está respondiendo',
-                status: HttpStatus.GATEWAY_TIMEOUT
-              });
+          timeout(FILE_VALIDATION.TIMEOUT),
+          catchError(async error => {
+            // Si falló la creación del rubro pero se subió el archivo, eliminarlo
+            if (uploadedFileName) {
+              try {
+                await firstValueFrom(
+                  this.filesClient.send('file.delete', { 
+                    filename: uploadedFileName,
+                    provider: 'firebase' 
+                  }).pipe(timeout(FILE_VALIDATION.TIMEOUT))
+                );
+              } catch (deleteError) {
+                this.logger.error('Error al eliminar archivo después de fallo:', deleteError);
+              }
             }
-            throw new RpcException(err);
+            throw error;
           })
         )
       );
 
-    await this.updateLocalCache();
+      await this.invalidateAllCaches();
 
-      return result;
+      // Agregar URL del icono a la respuesta
+      return {
+        ...result,
+        // iconoUrl: uploadedFileName ? this.fileUrlHelper.getFileUrl(uploadedFileName) : null
+      };
+
     } catch (error) {
-      if (error instanceof RpcException) {
-        throw error;
-      }
-      throw new RpcException({
-        message: 'Error en el proceso',
-        status: HttpStatus.INTERNAL_SERVER_ERROR
-      });
+      throw FileErrorHelper.createError(
+        'Error al crear el rubro',
+        FileErrorCode.PROCESSING_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        { originalError: error.message }
+      );
     }
-  }
 
-  private async updateLocalCache() {
-    // Limpiar la caché local
-    await this.redisService.clearAll();
+  } catch (error) {
+    // Asegurarse de manejar tanto errores de archivo como de creación
+    if (error instanceof RpcException) {
+      throw error;
+    }
+    throw FileErrorHelper.handleUploadError(error, icono?.originalname);
   }
+}
+
+private extractFileName(fileResponse: any): string {
+  try {
+    if (!fileResponse?.filename) {
+      throw new Error('Respuesta de archivo inválida');
+    }
+
+    if (fileResponse.provider === 'firebase') {
+      const parts = fileResponse.filename.split('/').pop()?.split('?');
+      if (!parts?.[0]) {
+        throw new Error('Nombre de archivo inválido');
+      }
+      return parts[0];
+    }
+
+    const url = new URL(fileResponse.filename);
+    const fileName = url.pathname.split('/').pop();
+    if (!fileName) {
+      throw new Error('No se pudo extraer el nombre del archivo');
+    }
+    return fileName;
+
+  } catch (error) {
+    throw FileErrorHelper.createError(
+      'Error al procesar nombre de archivo',
+      FileErrorCode.PROCESSING_ERROR,
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      { 
+        response: fileResponse,
+        originalError: error.message 
+      }
+    );
+  }
+}
+
+
+  
 
   @Get()
   // @UseGuards(RateLimitGuard)

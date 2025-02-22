@@ -40,3 +40,4 @@ const clientsConfig = ClientsModule.register(clientsConfigArray);
 })
 export class RabbitMQModule { }
 
+
