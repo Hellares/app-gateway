@@ -70,54 +70,54 @@ export class FileErrorHelper {
     );
   }
 
-  static handleValidationError(file: Express.Multer.File, config: any): void {
-    if (!file) {
-      throw this.createError(
-        'No se ha proporcionado ningún archivo',
-        FileErrorCode.VALIDATION_ERROR,
-        HttpStatus.BAD_REQUEST
-      );
-    }
+  // static handleValidationError(file: Express.Multer.File, config: any): void {
+  //   if (!file) {
+  //     throw this.createError(
+  //       'No se ha proporcionado ningún archivo',
+  //       FileErrorCode.VALIDATION_ERROR,
+  //       HttpStatus.BAD_REQUEST
+  //     );
+  //   }
 
-    if (file.size > config.maxSize) {
-      throw this.createError(
-        `El archivo excede el tamaño máximo permitido de ${config.maxSize / (1024 * 1024)}MB`,
-        FileErrorCode.SIZE_EXCEEDED,
-        HttpStatus.BAD_REQUEST,
-        {
-          maxSize: config.maxSize,
-          actualSize: file.size,
-          filename: file.originalname
-        }
-      );
-    }
+  //   if (file.size > config.maxSize) {
+  //     throw this.createError(
+  //       `El archivo excede el tamaño máximo permitido de ${config.maxSize / (1024 * 1024)}MB`,
+  //       FileErrorCode.SIZE_EXCEEDED,
+  //       HttpStatus.BAD_REQUEST,
+  //       {
+  //         maxSize: config.maxSize,
+  //         actualSize: file.size,
+  //         filename: file.originalname
+  //       }
+  //     );
+  //   }
 
-    if (!config.allowedMimeTypes.includes(file.mimetype)) {
-      throw this.createError(
-        `Formato de archivo no permitido. Formatos aceptados: ${config.allowedMimeTypes.join(', ')}`,
-        FileErrorCode.INVALID_TYPE,
-        HttpStatus.BAD_REQUEST,
-        {
-          allowedTypes: config.allowedMimeTypes,
-          receivedType: file.mimetype,
-          filename: file.originalname
-        }
-      );
-    }
-  }
+  //   if (!config.allowedMimeTypes.includes(file.mimetype)) {
+  //     throw this.createError(
+  //       `Formato de archivo no permitido. Formatos aceptados: ${config.allowedMimeTypes.join(', ')}`,
+  //       FileErrorCode.INVALID_TYPE,
+  //       HttpStatus.BAD_REQUEST,
+  //       {
+  //         allowedTypes: config.allowedMimeTypes,
+  //         receivedType: file.mimetype,
+  //         filename: file.originalname
+  //       }
+  //     );
+  //   }
+  // }
 
-  static handleProcessingError(error: any, filename: string, operation: string): never {
-    throw this.createError(
-      `Error al procesar el archivo ${filename} durante ${operation}`,
-      FileErrorCode.PROCESSING_ERROR,
-      HttpStatus.INTERNAL_SERVER_ERROR,
-      {
-        operation,
-        filename,
-        originalError: error.message
-      }
-    );
-  }
+  // static handleProcessingError(error: any, filename: string, operation: string): never {
+  //   throw this.createError(
+  //     `Error al procesar el archivo ${filename} durante ${operation}`,
+  //     FileErrorCode.PROCESSING_ERROR,
+  //     HttpStatus.INTERNAL_SERVER_ERROR,
+  //     {
+  //       operation,
+  //       filename,
+  //       originalError: error.message
+  //     }
+  //   );
+  // }
 
   static handleFileNotFound(filename: string): never {
     throw this.createError(

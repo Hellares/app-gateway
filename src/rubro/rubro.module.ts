@@ -4,7 +4,7 @@ import { RabbitMQModule } from 'src/transports/rabbitmq.module';
 import { RedisModule } from 'src/redis/redis.module';
 import { DEFAULT_RATE_LIMIT_CONFIG } from 'src/common/guards/rate-limit.config';
 import { RateLimitGuard } from 'src/common/guards/rate-limit.guard';
-import { FileValidator } from 'src/files/common/validator/file.validator';
+// import { FileValidator } from 'src/files/common/validator/file.validator';
 
 
 
@@ -16,7 +16,7 @@ import { FileValidator } from 'src/files/common/validator/file.validator';
           useValue: DEFAULT_RATE_LIMIT_CONFIG
         },
     RateLimitGuard,
-    FileValidator,
+    // FileValidator,
   ],
   imports: [
     RabbitMQModule,
