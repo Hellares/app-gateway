@@ -4,101 +4,6 @@ import { Observable, throwError } from 'rxjs';
 import { ErrorResponse } from '../interfaces/error-response.interface';
 
 
-// @Catch(RpcException)
-// export class RpcCustomExceptionFilter implements ExceptionFilter {
-//   protected readonly logger = new Logger('RpcExceptionFilter');
-
-//   catch(exception: RpcException, host: ArgumentsHost): Observable<any> {
-//     const error = exception.getError();
-//     let errorResponse: ErrorResponse;
-
-//     try {
-//       errorResponse = this.parseError(error);
-
-//       // Logging basado en el tipo de error
-//       this.logError(errorResponse);
-
-//       if (host.getType() === 'http') {
-//         const response = host.switchToHttp().getResponse();
-//         return response.status(errorResponse.status).json(errorResponse);
-//       }
-
-//       return throwError(() => errorResponse);
-//     } catch (unexpectedError) {
-//       return this.handleUnexpectedError(unexpectedError);
-//     }
-//   }
-
-//   private parseError(error: any): ErrorResponse {
-//     if (typeof error === 'string') {
-//       return {
-//         status: HttpStatus.BAD_REQUEST,
-//         message: error,
-//         error: 'Error de Validación',
-//         code: 'VALIDATION_ERROR',
-//         timestamp: new Date().toISOString()
-//       };
-//     }
-
-//     if (error instanceof Error) {
-//       return {
-//         status: HttpStatus.INTERNAL_SERVER_ERROR,
-//         message: error.message,
-//         error: 'Error del Sistema',
-//         code: 'SYSTEM_ERROR',
-//         timestamp: new Date().toISOString(),
-//         details: error.stack
-//       };
-//     }
-
-//     if (typeof error === 'object' && error !== null) {
-//       return {
-//         status: error.status || HttpStatus.CONFLICT,
-//         message: error.message || 'Error de negocio',
-//         error: error.error || 'Error de Negocio',
-//         code: error.code || 'BUSINESS_ERROR',
-//         timestamp: new Date().toISOString(),
-//         details: error.details || error
-//       };
-//     }
-
-//     return {
-//       status: HttpStatus.INTERNAL_SERVER_ERROR,
-//       message: 'Error interno del servidor',
-//       error: 'Error Inesperado',
-//       code: 'INTERNAL_SERVER_ERROR',
-//       timestamp: new Date().toISOString()
-//     };
-//   }
-
-//   private logError(errorResponse: ErrorResponse): void {
-//     if (errorResponse.status === HttpStatus.INTERNAL_SERVER_ERROR) {
-//       this.logger.error(`❌ Error interno: ${errorResponse.message}`, {
-//         code: errorResponse.code,
-//         details: errorResponse.details
-//       });
-//     } else {
-//       this.logger.warn(`⚠️ Error de negocio: ${errorResponse.message}`, {
-//         code: errorResponse.code,
-//         details: errorResponse.details
-//       });
-//     }
-//   }
-
-//   private handleUnexpectedError(unexpectedError: any): Observable<any> {
-//     const fallbackError: ErrorResponse = {
-//       status: HttpStatus.INTERNAL_SERVER_ERROR,
-//       message: 'Error inesperado en el servidor',
-//       error: 'Error Crítico',
-//       code: 'CRITICAL_ERROR',
-//       timestamp: new Date().toISOString()
-//     };
-    
-//     this.logger.error('❌ Error crítico en el filtro:', unexpectedError);
-//     return throwError(() => fallbackError);
-//   }
-// }
-
 @Catch(RpcException)
 export class RpcCustomExceptionFilter implements ExceptionFilter {
   // Logger más ligero
@@ -108,6 +13,7 @@ export class RpcCustomExceptionFilter implements ExceptionFilter {
 
   // Objeto de error por defecto reutilizable
   private readonly DEFAULT_ERROR: ErrorResponse = {
+    success: false,
     status: HttpStatus.INTERNAL_SERVER_ERROR,
     message: 'Error interno del servidor',
     error: 'Error Inesperado',
@@ -151,38 +57,36 @@ export class RpcCustomExceptionFilter implements ExceptionFilter {
   }
 
   private parseError(error: any, baseError: ErrorResponse): ErrorResponse {
-    // Manejo de errores tipo string
+    baseError.success = false;
     if (typeof error === 'string') {
-      baseError.status = HttpStatus.BAD_REQUEST;
-      baseError.message = error;
-      baseError.error = 'Error de Validación';
-      baseError.code = 'VALIDATION_ERROR';
-      return baseError;
+      return {
+        ...baseError,
+        status: HttpStatus.BAD_REQUEST,
+        message: error,
+        error: 'Error de Validación',
+        code: 'VALIDATION_ERROR'
+      }
     }
 
-    // Manejo de errores nativos de JavaScript
     if (error instanceof Error) {
-      baseError.status = HttpStatus.INTERNAL_SERVER_ERROR;
-      baseError.message = error.message;
-      baseError.error = 'Error del Sistema';
-      baseError.code = 'SYSTEM_ERROR';
-      baseError.details = error.stack;
-      return baseError;
+      return {
+        ...baseError,
+        status: HttpStatus.INTERNAL_SERVER_ERROR,
+        message: error.message,
+        error: 'Error del Sistema',
+        code: 'SYSTEM_ERROR'
+      };
     }
 
     // Manejo de objetos de error
     if (typeof error === 'object' && error !== null) {
-      // Usar mapeo estático de códigos de estado
-      baseError.status = RpcCustomExceptionFilter.STATUS_MAP[error.code] 
-        || error.status 
-        || HttpStatus.CONFLICT;
-      
-      baseError.message = error.message || 'Error de negocio';
-      baseError.error = error.error || 'Error de Negocio';
-      baseError.code = error.code || 'BUSINESS_ERROR';
-      baseError.details = error.details || error;
-      
-      return baseError;
+      return {
+        ...baseError,
+        status: RpcCustomExceptionFilter.STATUS_MAP[error.code] || error.status || HttpStatus.CONFLICT,
+        message: error.message || 'Error de negocio',
+        error: error.error || 'Error de Negocio',
+        code: error.code || 'BUSINESS_ERROR'
+      };
     }
 
     // Error por defecto
@@ -203,7 +107,7 @@ export class RpcCustomExceptionFilter implements ExceptionFilter {
 
       this.logger.error(logMessage, {
         code: errorResponse.code,
-        details: errorResponse.details
+        // details: errorResponse.details
       });
     }
   }
@@ -220,6 +124,7 @@ export class RpcCustomExceptionFilter implements ExceptionFilter {
 
   private handleUnexpectedError(unexpectedError: any): Observable<any> {
     const fallbackError: ErrorResponse = {
+      success: false,
       status: HttpStatus.INTERNAL_SERVER_ERROR,
       message: 'Error inesperado en el servidor',
       error: 'Error Crítico',

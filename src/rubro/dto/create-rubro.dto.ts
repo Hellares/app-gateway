@@ -20,4 +20,20 @@ export class CreateRubroDto {
   @Min(0)
   @IsOptional()
   orden: number;
+
+
+  //! Propiedades para crear el registro de la imagen en la bd
+
+  @IsString()
+  @IsOptional()
+  tenantId?: string;
+
+  @IsString()
+  @IsOptional()
+  provider?: string;
+
+  @IsString()
+  @IsOptional()
+  empresaId?: string;
+ 
 }

@@ -1,19 +1,20 @@
-import { Controller, Delete, Get, Inject, Logger, Param, Post, UploadedFile, UploadedFiles, Body } from '@nestjs/common';
-import { ClientProxy } from '@nestjs/microservices';
-import { SERVICES } from '../transports/constants';
-import { catchError, firstValueFrom, timeout } from 'rxjs';
-import { FILE_VALIDATION } from './common/constants/file.validator.constant';
+import { Controller, Delete, Get, Inject, Logger, Param, Post, UploadedFile, UploadedFiles, Body, Query, NotFoundException } from '@nestjs/common';
 import { UploadFile } from './common/decorators/file-upload.decorator';
 import { UploadFileResponse, UploadMultipleResponse } from './common/interfaces/file-response.interface';
 import { FileErrorHelper } from './common/helpers/file-error.helper';
 import { UploadFiles } from './common/decorators/file-upload-multiple.decorator';
+import { UnifiedFilesService } from './unified-files.service';
+import { CategoriaArchivo } from 'src/common/enums/categoria-archivo.enum';
+import { ArchivoService } from 'src/archivos/archivo.service';
+import { FileUrlHelper } from './common/helpers/file-url.helper';
 
 @Controller('files')
 export class FilesController {
   private readonly logger = new Logger(FilesController.name);
 
   constructor(
-    @Inject(SERVICES.FILES) private readonly filesClient: ClientProxy,
+    private readonly filesService: UnifiedFilesService,
+    private readonly archivoService: ArchivoService
   ) {}
 
   @Post('upload')
@@ -21,19 +22,13 @@ export class FilesController {
   async uploadFile(
     @UploadedFile() file: Express.Multer.File,
     @Body('provider') provider?: string,
+    @Body('tenantId') tenantId?: string,
   ): Promise<UploadFileResponse> {
     try {
-      const response = await firstValueFrom(
-        this.filesClient.send('file.upload', { 
-          file,
-          provider
-        }).pipe(
-          timeout(FILE_VALIDATION.TIMEOUT),
-          catchError(error => {
-            throw FileErrorHelper.handleUploadError(error, file.originalname);
-          })
-        )
-      );
+      const response = await this.filesService.uploadFile(file, {
+        provider,
+        tenantId
+      });
 
       return {
         success: true,
@@ -41,7 +36,8 @@ export class FilesController {
           filename: response.filename,
           originalName: response.originalName || file.originalname,
           size: response.size || file.size,
-          processedInfo: response.processedInfo
+          url: response.url,
+          tenantId: response.tenantId,
         }
       };
     } catch (error) {
@@ -54,26 +50,24 @@ export class FilesController {
   async uploadMultipleFiles(
     @UploadedFiles() files: Express.Multer.File[],
     @Body('provider') provider?: string,
+    @Body('tenantId') tenantId?: string,
   ): Promise<UploadMultipleResponse> {
     try {
+      this.logger.debug(`📤 Iniciando upload múltiple: ${files.length} archivos`);
+      
       const uploadPromises = files.map(async file => {
         try {
-          const response = await firstValueFrom(
-            this.filesClient.send('file.upload', { 
-              file, 
-              provider
-            }).pipe(
-              timeout(FILE_VALIDATION.TIMEOUT),
-              catchError(error => {
-                throw FileErrorHelper.handleUploadError(error, file.originalname);
-              })
-            )
-          );
+          const response = await this.filesService.uploadFile(file, {
+            provider,
+            tenantId
+          });
 
           return {
             filename: response.filename,
             originalName: response.originalName || file.originalname,
             size: response.size || file.size,
+            url: response.url,
+            tenantId: response.tenantId,
             success: true
           };
         } catch (error) {
@@ -91,6 +85,8 @@ export class FilesController {
       const successful = results.filter(r => r.success);
       const failed = results.filter(r => !r.success);
 
+      this.logger.debug(`✅ Upload múltiple completado: ${successful.length} exitosos, ${failed.length} fallidos`);
+
       return {
         success: failed.length === 0,
         totalProcessed: results.length,
@@ -107,21 +103,13 @@ export class FilesController {
   async deleteFile(
     @Param('filename') filename: string,
     @Body('provider') provider?: string,
+    @Body('tenantId') tenantId?: string,
   ) {
     try {
-      await firstValueFrom(
-        this.filesClient.send('file.delete', { filename, provider }).pipe(
-          timeout(FILE_VALIDATION.TIMEOUT),
-          catchError(error => {
-            throw FileErrorHelper.handleDeleteError(error, filename);
-          })
-        )
-      );
-
-      return {
-        success: true,
-        message: `Archivo ${filename} eliminado correctamente`
-      };
+      return await this.filesService.deleteFile(filename, {
+        provider,
+        tenantId
+      });
     } catch (error) {
       throw FileErrorHelper.handleDeleteError(error, filename);
     }
@@ -130,19 +118,46 @@ export class FilesController {
   @Get(':filename')
   async getFile(
     @Param('filename') filename: string,
-    @Body('provider') provider?: string,
+    @Query('provider') provider?: string,
+    @Query('tenantId') tenantId?: string,
   ) {
     try {
-      return await firstValueFrom(
-        this.filesClient.send('file.get', { filename, provider }).pipe(
-          timeout(FILE_VALIDATION.TIMEOUT),
-          catchError(error => {
-            throw FileErrorHelper.handleUploadError(error, filename);
-          })
-        )
-      );
+      return await this.filesService.getFile(filename, {
+        provider,
+        tenantId
+      });
+    } catch (error) {
+      throw FileErrorHelper.handleUploadError(error, filename);
+    }
+  }  
+
+  @Get(':filename/url')
+  async getFileUrl(
+    @Param('filename') filename: string,
+    @Query('provider') provider?: string,
+    @Query('tenantId') tenantId?: string,
+  ) {
+    try {
+      // Usar el helper mejorado
+      const url = FileUrlHelper.getFileUrl(filename, { 
+        provider, 
+        tenantId 
+      });
+      
+      if (!url) {
+        throw new NotFoundException(`No se pudo generar URL para ${filename}`);
+      }
+      
+      return {
+        filename,
+        tenantId,
+        provider: provider || process.env.STORAGE_TYPE || 'firebase',
+        url
+      };
     } catch (error) {
       throw FileErrorHelper.handleUploadError(error, filename);
     }
   }
 }
+
+

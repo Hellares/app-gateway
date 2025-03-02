@@ -4,7 +4,7 @@ export interface FileInfo {
   size: number;
   url?: string;
   type?: string;
-  processedInfo?: any;
+  tenantId?: string;
   error?: string;
   success?: boolean;
 }

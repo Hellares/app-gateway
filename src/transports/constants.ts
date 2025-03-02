@@ -4,6 +4,7 @@ export const SERVICES = {
   COMPANY: 'COMPANY_SERVICE',
   RUBROS: 'RUBROS_SERVICE',
   FILES: 'FILES_SERVICE',
+  ARCHIVO: 'ARCHIVO_SERVICE',
 } as const;
 
 export const QUEUES = {
@@ -12,4 +13,5 @@ export const QUEUES = {
   COMPANY: 'company_queue',
   RUBROS: 'rubros_queue',
   FILES: 'files_queue',
+  ARCHIVO: 'archivo_queue',
 } as const;

@@ -32,4 +32,21 @@ export const CACHE_KEYS = {
     ALL_DELETED: 'plandeleted:all',
     PATTERN: 'plan:*'
   },
+
+  ARCHIVO: {
+    BASE: {
+      ACTIVE: 'archivoactive',
+      DELETED: 'archivodeleted',
+    },
+    PAGINATED: (page: number, limit: number) => 
+      `archivoactive:all:page${page}:limit${limit}`,
+    PAGINATED_BY_EMPRESA: (empresaId: string, page: number, limit: number, categoria?: string) => 
+      `archivoactive:empresa:${empresaId}:${categoria || 'all'}:page${page}:limit${limit}`,
+    SINGLE: (id: string) => 
+      `archivo:${id}`,
+    ALL_ACTIVE: 'archivoactive:all',
+    ALL_DELETED: 'archivodeleted:all',
+    PATTERN: 'archivo:*',
+    EMPRESA_PATTERN: (empresaId: string) => `archivoactive:empresa:${empresaId}:*`
+  },
 } as const;

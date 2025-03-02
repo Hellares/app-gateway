@@ -1,11 +1,10 @@
 import { Body, Controller, Delete, Get, HttpStatus, Inject, Logger,  Param,  Post, Query,  UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
-import { FileInterceptor } from '@nestjs/platform-express';
 import { catchError, firstValueFrom, timeout, TimeoutError } from 'rxjs';
 import { CACHE_KEYS } from 'src/redis/constants/redis-cache.keys.contants';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { FileUrlHelper } from 'src/files/common/helpers/file-url.helper';
-import { FILE_CONFIG, FILE_VALIDATION } from 'src/files/common/constants/file.validator.constant';
+import { FILE_VALIDATION } from 'src/files/common/constants/file.validator.constant';
 import { RedisService } from 'src/redis/redis.service';
 import { CreateRubroDto } from './dto/create-rubro.dto';
 import { SERVICES } from 'src/transports/constants';
@@ -13,10 +12,10 @@ import { Rubro } from './rubro.interface';
 import { REDIS_GATEWAY_CONFIG } from 'src/redis/config/redis.constants';
 import { RateLimitGuard } from 'src/common/guards/rate-limit.guard';
 import { RATE_LIMIT_PRESETS } from 'src/common/guards/rate-limit.config';
-
-import { FileErrorCode, FileErrorHelper } from 'src/files/common/helpers/file-error.helper';
 import { UploadFile } from 'src/files/common/decorators/file-upload.decorator';
-import { formatFileSize } from 'src/common/util/format-file-size.util';
+import { ArchivoService } from 'src/archivos/archivo.service';
+import { CategoriaArchivo } from 'src/common/enums/categoria-archivo.enum';
+import { UnifiedFilesService } from 'src/files/unified-files.service';
 
 
 @Controller('rubro')
@@ -27,52 +26,61 @@ export class RubroController {
   
 
   constructor(
-    @Inject(SERVICES.COMPANY) private readonly rubroClient: ClientProxy,
-    @Inject(SERVICES.FILES) private readonly filesClient: ClientProxy,
+    @Inject(SERVICES.COMPANY) private readonly rubroClient: ClientProxy,  
+    private readonly unifiedfilesService: UnifiedFilesService,
     private readonly redisService: RedisService,
+    private readonly archivoService: ArchivoService,
   ) {}  
 
 
+
   @Post()
+  async createSimple(@Body() createRubroDto: CreateRubroDto) {
+    const { nombre, descripcion } = createRubroDto;
+    this.logger.debug(`📝 Creando rubro simple: ${nombre}`);
+    
+    const result = await firstValueFrom(
+      this.rubroClient.send('create.Rubro', { nombre, descripcion }).pipe(
+        timeout(10000), // Usar un valor constante o configuración adecuada
+        catchError(err => {
+          if (err instanceof TimeoutError) {
+            throw new RpcException({
+              message: 'El servicio no está respondiendo',
+              status: HttpStatus.GATEWAY_TIMEOUT
+            });
+          }
+          throw new RpcException(err);
+        })
+      )
+    );    
+    await this.invalidateAllCaches();
+    return result;
+  }
+
+  
+@Post('/with-image')
 @UploadFile('icono')
 async create(
   @Body() createRubroDto: CreateRubroDto,
   @UploadedFile() icono?: Express.Multer.File,
+  @Body('tenantId') tenantId?: string,
+  @Body('provider') provider?: string,
+  @Body('empresaId') empresaId?: string,
 ) {
-  let uploadedFileName: string | null = null;
   const startTime = Date.now();
+  let uploadedFile = null;
 
   try {
     // 1. Subir archivo si existe
     if (icono) {
-      this.logger.debug(`📤 Subiendo icono para rubro: ${icono.originalname} (${formatFileSize(icono.size)})`);
+      uploadedFile = await this.unifiedfilesService.uploadFile(icono, {
+        provider: provider || 'firebase',
+        tenantId: tenantId || 'admin',
+        // No pasamos el resto de información porque aún no tenemos el ID del rubro
+      });
       
-      try {
-        const fileResponse = await firstValueFrom(
-          this.filesClient.send('file.upload', { 
-            file: icono, 
-            provider: 'firebase'
-          }).pipe(
-            timeout(FILE_VALIDATION.TIMEOUT),
-            catchError(error => {
-              throw FileErrorHelper.handleUploadError(error, icono.originalname);
-            })
-          )
-        );
-
-        uploadedFileName = fileResponse.filename;
-        createRubroDto.icono = uploadedFileName;
-        
-        this.logger.debug(`✅ Icono subido: ${uploadedFileName}`);
-      } catch (error) {
-        const duration = Date.now() - startTime;
-        this.logger.error(`❌ Error al subir icono`, {
-          filename: icono.originalname,
-          error: error.message,
-          duration: `${duration}ms`
-        });
-        throw error;
-      }
+      // Asignamos solo el nombre del archivo al DTO
+      createRubroDto.icono = uploadedFile.filename;
     }
 
     // 2. Crear el rubro
@@ -85,79 +93,61 @@ async create(
         )
       );
 
+      //! Guardar registro de metadatos en base de datos, es que fuera necesario
+      if (uploadedFile && result.id) {
+        this.archivoService.createArchivo({
+          nombre: icono.originalname,
+          filename: this.archivoService.extractFilename(uploadedFile.filename),
+          ruta: uploadedFile.filename,
+          tipo: icono.mimetype,
+          tamanho: icono.size,
+          empresaId: empresaId,
+          categoria: CategoriaArchivo.LOGO,
+          tipoEntidad: createRubroDto.nombre,
+          entidadId: result.id,
+          descripcion: `Icono del rubro ${createRubroDto.nombre}`,
+          esPublico: true
+        });
+      }
+
       await this.invalidateAllCaches();
       
       const duration = Date.now() - startTime;
       this.logger.debug(`✅ Rubro creado: ${createRubroDto.nombre} en ${duration}ms`);
       
+      // Enriquecer la respuesta con la URL
+      if (uploadedFile && result.data) {
+        result.data.iconoUrl = uploadedFile.url;
+      }
+      
       return result;
-
     } catch (error) {
-      // Si falló la creación del rubro pero se subió el archivo, eliminarlo
-      if (uploadedFileName) {
-        this.logger.debug(`🗑️ Iniciando rollback - Eliminando icono: ${uploadedFileName}`);
+      // Si falló la creación pero se subió el archivo, eliminarlo
+      if (uploadedFile) {
+        this.logger.debug(`🗑️ Iniciando rollback - Eliminando icono: ${uploadedFile.filename}`);
         try {
-          await firstValueFrom(
-            this.filesClient.send('file.delete', { 
-              filename: uploadedFileName,
-              provider: 'firebase' 
-            }).pipe(timeout(FILE_VALIDATION.TIMEOUT))
-          );
+          await this.unifiedfilesService.deleteFile(uploadedFile.filename, {
+            provider: provider || 'firebase',
+            tenantId: tenantId || 'admin'
+          });
           this.logger.debug(`✅ Rollback completado - Icono eliminado`);
         } catch (deleteError) {
           this.logger.error(`❌ Error en rollback al eliminar icono`, {
-            filename: uploadedFileName,
+            filename: uploadedFile.filename,
             error: deleteError.message
           });
         }
       }
 
-      const duration = Date.now() - startTime;
-      this.logger.error(`❌ Error al crear rubro`, {
-        rubro: createRubroDto.nombre,
-        error: error.message,
-        duration: `${duration}ms`
-      });
-
-      throw new RpcException({
-        status: HttpStatus.INTERNAL_SERVER_ERROR,
-        message: 'Error al crear el rubro',
-        error: 'Error de Validación',
-        code: 'RUBRO_CREATION_ERROR',
-        timestamp: new Date().toISOString(),
-        details: {
-          originalError: error.message,
-          duration: `${duration}ms`
-        }
-      });
+      throw error;
     }
   } catch (error) {
-    const duration = Date.now() - startTime;
-    throw error; // Re-lanzar el error original sin crear logs adicionales
+    throw new RpcException({
+      message: `Error al crear rubro: ${error.message}`,
+      statusCode: HttpStatus.INTERNAL_SERVER_ERROR
+    });
   }
 }
-
-  private extractFileName(fileResponse: any): string {
-    try {
-      if (!fileResponse?.filename) {
-        throw new Error('Respuesta de archivo inválida');
-      }
-
-      return fileResponse.filename;
-
-    } catch (error) {
-      throw FileErrorHelper.createError(
-        'Error al procesar nombre de archivo',
-        FileErrorCode.PROCESSING_ERROR,
-        HttpStatus.INTERNAL_SERVER_ERROR,
-        { 
-          response: fileResponse,
-          originalError: error.message 
-        }
-      );
-    }
-  }
-
 
   
 
@@ -372,6 +362,115 @@ async findDeletedRubros(@Query() paginationDto: PaginationDto) {
     }
   }
 
+  //! Nuevo método para subir archivos a un rubro específico y registrarlos en la base de datos de archivos 
+  @Post(':id/files') 
+  @UploadFile('file')
+  async uploadRubroFile(
+    @Param('id') rubroId: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body('provider') provider?: string,
+    @Body('tenantId') tenantId?: string,
+    @Body('empresaId') empresaId?: string,
+    @Body('categoria') categoria?: CategoriaArchivo,
+    @Body('descripcion') descripcion?: string,
+  ) {
+    try {
+      // 1. Verificar que el rubro existe
+      // const rubroExistente = await firstValueFrom(
+      //   this.rubroClient.send('find.RubroById', rubroId).pipe(
+      //     timeout(5000),
+      //     // catchError(err => {
+      //     //   // this.logger.error(`Error al verificar rubro ${rubroId}:`, error);
+      //     //   // throw new NotFoundException(`Rubro con ID ${rubroId} no encontrado`);
+      //     //   throw new RpcException({
+      //     //     message: 'El servicio no está respondiendo',
+      //     //     status: HttpStatus.GATEWAY_TIMEOUT
+      //     //   });
+      //     // })
+      //     catchError(err => {
+      //       if (err instanceof TimeoutError) {
+      //         throw new RpcException({
+      //           message: 'El servicio no está respondiendo',
+      //           status: HttpStatus.GATEWAY_TIMEOUT
+      //         });
+      //       }
+      //       throw new RpcException(err);
+      //     })
+      //   )
+      // );
+  
+      // if (!rubroExistente || !rubroExistente.id) {
+      //   throw new RpcException(`Rubro con ID ${rubroId} no encontrado`);
+      // }
+  
+      // 2. Subir el archivo
+      // const fileResponse = await firstValueFrom(
+      //   this.filesService.send('file.upload', { 
+      //     file, 
+      //     provider: provider || 'firebase',
+      //     tenantId: tenantId || 'admin'
+      //   }).pipe(
+      //     timeout(FILE_VALIDATION.TIMEOUT),
+      //     catchError(error => {
+      //       throw FileErrorHelper.handleUploadError(error, file.originalname);
+      //     })
+      //   )
+      // );
+
+      const fileResponse = await this.unifiedfilesService.uploadFile(file, {
+        provider: provider || 'firebase',
+        tenantId: tenantId || 'admin',
+        // No pasamos el resto de información porque aún no tenemos el ID del rubro
+      });
+  
+      // 3. Registrar los metadatos del archivo
+      await this.archivoService.createArchivo({
+        nombre: file.originalname,
+        filename: this.archivoService.extractFilename(fileResponse.filename),
+        ruta: fileResponse.filename,
+        tipo: file.mimetype,
+        tamanho: file.size,
+        empresaId: empresaId || '8722e1ef-ee91-4c1d-9257-77f465d40fcd',  // Usar un valor por defecto o el proporcionado
+        categoria: categoria || CategoriaArchivo.LOGO,                 // Por defecto es IMAGEN pero puede ser LOGO u otro
+        tipoEntidad: 'rubro',                                           // Tipo específico para rubros
+        entidadId: rubroId,                                             // ID del rubro
+        descripcion: descripcion, //|| `Archivo adicional para el rubro ${rubroExistente.nombre || rubroId}`,
+        esPublico: true
+      });
+  
+      // 4. Opcionalmente, invalidar caché
+      await this.invalidateAllCaches();
+  
+      // 5. Devolver respuesta
+      return {
+        success: true,
+        file: {
+          filename: fileResponse.filename,
+          originalName: file.originalname,
+          size: file.size,
+          url: this.archivoService.buildFileUrl(fileResponse.filename) || fileResponse.url,
+          type: file.mimetype,
+          categoria: categoria || CategoriaArchivo.LOGO
+        },
+        message: `Archivo subido exitosamente para el rubro ${rubroId}`
+      };
+  
+    } catch (error) {
+      this.logger.error(`❌ Error al subir archivo para rubro ${rubroId}:`, {
+        error: error.message,
+        stack: error.stack
+      });
+      
+      if (error instanceof RpcException) {
+        throw error;
+      }
+      
+      throw new RpcException({
+        message: `Error al subir archivo para el rubro: ${error.message}`,
+        statusCode: HttpStatus.INTERNAL_SERVER_ERROR
+      });
+    }
+  }
 
   
 }

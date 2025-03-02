@@ -6,6 +6,7 @@ import { RedisModule } from './redis/redis.module';
 import { RedisService } from './redis/redis.service';
 import { PlansModule } from './plans/plans.module';
 import { FilesModule } from './files/files.module';
+import { ArchivoModule } from './archivos/archivo.module';
 
 @Module({
   controllers: [],
@@ -17,6 +18,7 @@ import { FilesModule } from './files/files.module';
     RedisModule,
     PlansModule,
     FilesModule,
+    ArchivoModule
   ],
 })
 export class AppModule {}
