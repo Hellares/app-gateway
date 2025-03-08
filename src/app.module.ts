@@ -22,14 +22,6 @@ import { LoggerModule } from 'nestjs-pino';
         // Desactivar el logging automático de HTTP (mejor para microservicios)
         autoLogging: false,
         
-        // Personalización de los logs HTTP
-        // autoLogging: {
-        //   // No loguear health checks o solicitudes a recursos estáticos
-        //   ignore: (req) => req.url.includes('/health') || 
-        //                   req.url.includes('/favicon.ico') ||
-        //                   req.url.includes('/public/'),
-        // },
-        
         // Formateo para desarrollo
         transport: process.env.NODE_ENV !== 'production' 
           ? {
@@ -58,12 +50,12 @@ import { LoggerModule } from 'nestjs-pino';
         
         // Optimización de serialización
         serializers: {
-          req: (req) => ({
-            id: req.id,
-            method: req.method,
-            url: req.url,
-            // Limitar la cantidad de datos para reducir el tamaño del log
-          }),
+          // req: (req) => ({
+          //   id: req.id,
+          //   method: req.method,
+          //   url: req.url,
+          // }),
+          req: () => undefined,
           res: (res) => ({
             statusCode: res.statusCode,
           }),

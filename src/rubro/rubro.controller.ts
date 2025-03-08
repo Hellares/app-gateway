@@ -84,7 +84,7 @@ async create(
     }
 
     // 2. Crear el rubro
-    this.logger.debug(`📝 Creando rubro: ${createRubroDto.nombre}`);
+    this.logger.debug(`Creando rubro: ${createRubroDto.nombre}`);
     
     try {
       const result = await firstValueFrom(
@@ -113,7 +113,7 @@ async create(
       await this.invalidateAllCaches();
       
       const duration = Date.now() - startTime;
-      this.logger.debug(`✅ Rubro creado: ${createRubroDto.nombre} en ${duration}ms`);
+      this.logger.debug(`Rubro creado: ${createRubroDto.nombre} en ${duration}ms`);
       
       // Enriquecer la respuesta con la URL
       if (uploadedFile && result.data) {
@@ -124,7 +124,7 @@ async create(
     } catch (error) {
       // Si falló la creación pero se subió el archivo, eliminarlo
       if (uploadedFile) {
-        this.logger.debug(`🗑️ Iniciando rollback - Eliminando icono: ${uploadedFile.filename}`);
+        this.logger.debug(`Iniciando rollback - Eliminando icono: ${uploadedFile.filename}`);
         try {
           await this.unifiedfilesService.deleteFile(uploadedFile.filename, {
             provider: provider || 'firebase',
