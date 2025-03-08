@@ -85,7 +85,7 @@ export class RedisService {
 
   private async initializeService() {
     try {
-      this.logger.log('🔄 Iniciando servicio Redis...');
+      this.logger.log('Iniciando servicio Redis...');
       this.serviceState = REDIS_SERVICE_STATE.CONNECTING;
   
       await this.cacheClient.connect();
@@ -100,7 +100,7 @@ export class RedisService {
         lastOnlineTime: new Date()
       });
   
-      this.logger.log('✅ Servicio Redis inicializado correctamente');
+      this.logger.log('Servicio Redis inicializado correctamente');
     } catch (error) {
       this.serviceState = REDIS_SERVICE_STATE.ERROR;
       this.logger.error('❌ Error inicializando el servicio Redis:', error);
@@ -113,11 +113,11 @@ export class RedisService {
       this.healthCheckInterval = setInterval(async () => {
         const health = await this.healthCheck();
         if (health.status !== 'healthy') {
-          this.logger.warn(`⚠️ Health check fallido: ${health.error}`);
+          this.logger.warn(`Health check fallido: ${health.error}`);
         }
       }, REDIS_GATEWAY_CONFIG.HEALTH_CHECK.INTERVAL);
       
-      this.logger.log(`✅ Health check iniciado - Intervalo: ${REDIS_GATEWAY_CONFIG.HEALTH_CHECK.INTERVAL}ms`);
+      this.logger.log(` Health check iniciado - Intervalo: ${REDIS_GATEWAY_CONFIG.HEALTH_CHECK.INTERVAL}ms`);
     }
   }
 
@@ -177,14 +177,14 @@ export class RedisService {
       return;
     }
   
-    this.logger.log('🔄 Iniciando reconexión...');
+    this.logger.log('Iniciando reconexión...');
     this.serviceState = REDIS_SERVICE_STATE.CONNECTING;
   
     setTimeout(async () => {
       try {
         const healthCheck = await this.healthCheck();
         if (healthCheck.status === 'healthy') {
-          this.logger.log('✅ Reconexión exitosa');
+          this.logger.log('Reconexión exitosa');
           await this.handleReconnection(); // Limpieza y reinicio al reconectar
           this.serviceState = REDIS_SERVICE_STATE.CONNECTED;
           this.consecutiveFailures = 0;
@@ -193,7 +193,7 @@ export class RedisService {
           throw new Error('Health check fallido en reconexión');
         }
       } catch (error) {
-        this.logger.warn(`⚠️ Reconexión fallida (intento ${this.consecutiveFailures}), próximo intento en ${this.getBackoffDelay()}ms`);
+        this.logger.warn(`Reconexión fallida (intento ${this.consecutiveFailures}), próximo intento en ${this.getBackoffDelay()}ms`);
         this.attemptReconnection();
       }
     }, this.getBackoffDelay());
@@ -216,7 +216,7 @@ export class RedisService {
       const wasConnected = this.serviceState === REDIS_SERVICE_STATE.CONNECTED;
       
       if (envs.isDevelopment) {
-        this.logger.debug('🔍 Verificando conexión con Redis...');
+        this.logger.debug(' Verificando conexión con Redis...');
       }
   
       const response = await firstValueFrom(
@@ -233,7 +233,7 @@ export class RedisService {
   
       // Si estábamos desconectados y ahora nos reconectamos
       if (!wasConnected) {
-        this.logger.log('✅ Conexión con Redis restablecida');
+        this.logger.log('Conexión con Redis restablecida');
         await this.handleReconnection(); // Limpieza y reinicio al reconectar
       }
   
@@ -270,17 +270,17 @@ private async startConnectionMonitoring() {
 
   // Log solo en desarrollo
   if (envs.isDevelopment) {
-    this.logger.debug(`🕒 Intervalo de monitoreo configurado: ${config.CHECK_INTERVAL}ms`);
+    this.logger.debug(`Intervalo de monitoreo configurado: ${config.CHECK_INTERVAL}ms`);
   }
 }
 
 private async handleReconnection() {
-  this.logger.log('🔄 Iniciando proceso de reconexión y limpieza...');
+  this.logger.log('Iniciando proceso de reconexión y limpieza...');
   
   try {
     // 1. Limpiar caché local primero
     this.localCache.clear();
-    this.logger.log('🧹 Caché local limpiado');
+    this.logger.log('Caché local limpiado');
 
     // 2. Intentar limpiar Redis
     const response = await firstValueFrom(
@@ -293,7 +293,7 @@ private async handleReconnection() {
     );
 
     if (response.success) {
-      this.logger.log('🧹 Redis limpiado correctamente');
+      this.logger.log('Redis limpiado correctamente');
     } else {
       throw new Error('Fallo al limpiar Redis');
     }
@@ -322,9 +322,9 @@ private async handleReconnection() {
       timeOfflineFormatted: '0s'
     };
     
-    this.logger.log('✅ Reconexión y limpieza completada exitosamente');
+    this.logger.log('Reconexion y limpieza completada exitosamente');
   } catch (error) {
-    this.logger.error('❌ Error durante la reconexión y limpieza:', error);
+    this.logger.error(' Error durante la reconexion y limpieza:', error);
     throw error;
   }
 }
@@ -334,12 +334,12 @@ private async handleReconnection() {
     
     if (this.serviceState === REDIS_SERVICE_STATE.CONNECTED) {
       this.serviceState = REDIS_SERVICE_STATE.ERROR;
-      this.logger.error(`❌ Conexión perdida con Redis: ${error.message}`);
+      this.logger.error(`Conexion perdida con Redis: ${error.message}`);
     }
   
     const backoffDelay = this.getBackoffDelay();
     this.logger.warn(
-      `⚠️ Fallo de conexión (${this.consecutiveFailures}/${REDIS_GATEWAY_CONFIG.ERROR_HANDLING.MAX_RETRIES})`,
+      `Fallo de conexion (${this.consecutiveFailures}/${REDIS_GATEWAY_CONFIG.ERROR_HANDLING.MAX_RETRIES})`,
       {
         error: error.message,
         nextRetry: `${backoffDelay}ms`,
@@ -365,10 +365,10 @@ private async handleReconnection() {
   
       // Solo loguear métricas detalladas en desarrollo
       if (envs.isDevelopment && this.config.DETAILED_LOGGING) {
-        this.logger.debug(`📊 Métricas actualizadas: ${JSON.stringify(this.metrics, null, 2)}`);
+        this.logger.debug(`oMétricas actualizadas: ${JSON.stringify(this.metrics, null, 2)}`);
       }
     } catch (error) {
-      this.logger.error('Error actualizando métricas', { 
+      this.logger.error('Error actualizando metricas', { 
         error, 
         operation, 
         responseTime 
@@ -478,7 +478,7 @@ private updateGlobalMetrics(currentMetrics: ServiceMetrics, responseTime: number
 
   // Solo loguear en desarrollo
   if (envs.isDevelopment && this.config.DETAILED_LOGGING) {
-    this.logger.debug(`📊 Métricas actualizadas: ${JSON.stringify(this.metrics, null, 2)}`);
+    this.logger.debug(`Metricas actualizadas: ${JSON.stringify(this.metrics, null, 2)}`);
   }
 }
 
@@ -504,7 +504,7 @@ private validateResponseTime(time: number): number {
   
   // Validar rangos razonables
   if (isNaN(numTime) || numTime <= 0 || numTime > 10000) {
-    this.logger.debug(`⚠️ Tiempo de respuesta inválido: ${time}. Usando último promedio válido.`);
+    this.logger.debug(`Tiempo de respuesta invalido: ${time}. Usando ultimo promedio válido.`);
     return this.metrics.averageResponseTime || 200; // valor por defecto razonable
   }
 
@@ -580,7 +580,7 @@ private calculateTotalSuccessRate(): number {
       // 1. Primero verificar caché local
       const localValue = this.getFromLocalCache<T>(key, startTime);
       if (localValue.success) {
-        this.logger.debug(`💾 Cache hit local: ${key}`);
+        this.logger.debug(`Cache hit local: ${key}`);
         return localValue;
       }
   
@@ -589,7 +589,7 @@ private calculateTotalSuccessRate(): number {
       
       // 3. Si se encontró en Redis, guardar en caché local
       if (redisResponse.success && redisResponse.data) {
-        this.logger.debug(`📝 Guardando en caché local desde Redis: ${key}`);
+        this.logger.debug(`Guardando en caché local desde Redis: ${key}`);
         this.setInLocalCache(
           key, 
           redisResponse.data, 
@@ -674,7 +674,7 @@ private calculateTotalSuccessRate(): number {
     
     // Si el error es de conexión/timeout y tenemos la key, intentamos usar caché local
     if (key && (error instanceof TimeoutError || this.serviceState !== REDIS_SERVICE_STATE.CONNECTED)) {
-      this.logger.warn(`⚠️ Error de conexión - Intentando usar caché local para key: ${key}`);
+      this.logger.warn(`Error de conexión - Intentando usar caché local para key: ${key}`);
       return this.getFromLocalCache<T>(key, startTime);
     }
   
@@ -702,7 +702,7 @@ private calculateTotalSuccessRate(): number {
   
       // Si Redis está conectado, guardar solo en Redis inicialmente
       if (this.serviceState === REDIS_SERVICE_STATE.CONNECTED) {
-        this.logger.debug(`💾 Guardando en Redis: ${key}`);
+        this.logger.debug(`Guardando en Redis: ${key}`);
         
         const response = await firstValueFrom<CacheResponse>(
           this.cacheClient.send(
@@ -716,7 +716,7 @@ private calculateTotalSuccessRate(): number {
         );
   
         if (response.success) {
-          this.logger.debug(`✅ Dato guardado exitosamente en Redis: ${key}`);
+          this.logger.debug(`Dato guardado exitosamente en Redis: ${key}`);
         }
   
         this.updateMetrics('hit', Date.now() - startTime);
@@ -732,10 +732,10 @@ private calculateTotalSuccessRate(): number {
       }
   
       // En modo offline, usar solo caché local
-      this.logger.debug(`⚠️ Redis offline - Guardando solo en caché local: ${key}`);
+      this.logger.debug(`Redis offline - Guardando solo en caché local: ${key}`);
       return this.setInLocalCache(key, value, startTime, ttl);
     } catch (error) {
-      this.logger.error(`❌ Error guardando dato - Key: ${key}`, error);
+      this.logger.error(`Error guardando dato - Key: ${key}`, error);
       return this.handleError(error, startTime, key);
     }
   }
@@ -743,13 +743,13 @@ private calculateTotalSuccessRate(): number {
 
 
   setInLocalCache(key: string, value: any, startTime: number, ttl?: number): CacheResponse {
-    this.logger.debug(`🔄 Iniciando guardado en caché local - Key: ${key}`);
+    this.logger.debug(`Iniciando guardado en caché local - Key: ${key}`);
     
     // Verificar y limpiar si es necesario
     if (this.localCache.size >= REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE) {
       const deletedKey = this.localCache.keys().next().value;
       this.localCache.delete(deletedKey);
-      this.logger.debug(`🧹 Limpiando caché local - Eliminada key: ${deletedKey}`);
+      this.logger.debug(`Limpiando caché local - Eliminada key: ${deletedKey}`);
     }
   
     // Calcular TTL
@@ -762,7 +762,7 @@ private calculateTotalSuccessRate(): number {
       expiresAt
     });
   
-    this.logger.debug(`✅ Dato guardado en caché local - Key: ${key}, Expires: ${new Date(expiresAt).toISOString()}`);
+    this.logger.debug(`Dato guardado en caché local - Key: ${key}, Expires: ${new Date(expiresAt).toISOString()}`);
     this.updateMetrics('hit', Date.now() - startTime);
     
     return {
@@ -897,11 +897,11 @@ private calculateTotalSuccessRate(): number {
       this.lastOnlineTime = new Date();
   
       if (wasOffline) {
-        this.logger.log('🔄 Servicio restaurado - Iniciando limpieza de cachés');
+        this.logger.log('Servicio restaurado - Iniciando limpieza de cachés');
         try {
           await this.clearAll();
         } catch (error) {
-          this.logger.warn('⚠️ Error al limpiar cachés después de reconexión:', error);
+          this.logger.warn(' Error al limpiar cachés después de reconexión:', error);
         }
       }
   
@@ -926,7 +926,7 @@ private calculateTotalSuccessRate(): number {
       return healthResponse;
   
     } catch (error) {
-      this.logger.error('❌ Health check fallido:', {
+      this.logger.error('Health check fallido:', {
         error: error.message,
         consecutiveFailures: this.consecutiveFailures,
         serviceState: this.serviceState

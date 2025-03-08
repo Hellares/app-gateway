@@ -1,18 +1,14 @@
-import { Body, Controller, Get, HttpException, HttpStatus, Inject, Logger, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpStatus, Inject, Logger, Param, Post, Query } from '@nestjs/common';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { SERVICES } from 'src/transports/constants';
 import { catchError, firstValueFrom, timeout, TimeoutError } from 'rxjs';
-import { ArchivosByEmpresaDto, PaginationDto } from 'src/common/dto/pagination.dto';
+import { ArchivosByEmpresaDto } from 'src/common/dto/pagination.dto';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
-import { CategoriaArchivo } from 'src/common/enums/categoria-archivo.enum';
 import { ArchivoService } from 'src/archivos/archivo.service';
 import { FileUrlHelper } from 'src/files/common/helpers/file-url.helper';
-import { UnifiedFilesService } from 'src/files/unified-files.service';
 import { RedisService } from 'src/redis/redis.service';
 import { CACHE_KEYS } from 'src/redis/constants/redis-cache.keys.contants';
 import { REDIS_GATEWAY_CONFIG } from 'src/redis/config/redis.constants';
-
-import { url } from 'inspector';
 
 @Controller('empresa')
 export class EmpresaController {
@@ -26,7 +22,7 @@ export class EmpresaController {
   @Post()
   async create(@Body() createCompanyDto: CreateEmpresaDto) {
     return this.companiesClient.send('create.empresa', createCompanyDto).pipe(
-      timeout(5000), // Timeout de 5 segundos
+      timeout(10000),
       catchError(err => {
         if (err instanceof TimeoutError) {
           throw new RpcException({
