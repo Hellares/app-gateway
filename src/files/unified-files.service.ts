@@ -8,6 +8,52 @@ import { CategoriaArchivo } from 'src/common/enums/categoria-archivo.enum';
 import { formatFileSize } from 'src/common/util/format-file-size.util';
 import { FILE_VALIDATION } from './common/constants/file.validator.constant';
 import { FileErrorHelper } from './common/helpers/file-error.helper';
+import { ImageProcessorService } from './image-processor.service';
+
+const IMAGE_PROCESSING_CONFIG = {
+  // Tamaño en bytes a partir del cual se procesarán las imágenes
+  // Por defecto: 1MB
+  sizeThreshold: 1024 * 1024,
+  
+  // Opciones de procesamiento para diferentes tipos de imágenes
+  presets: {
+    // Para imágenes de perfil/avatar (tamaño pequeño, alta calidad)
+    profile: {
+      maxWidth: 500,
+      maxHeight: 500,
+      quality: 90,
+      format: 'jpeg' as const
+    },
+    // Para imágenes de productos (tamaño medio, buena calidad)
+    product: {
+      maxWidth: 1200,
+      maxHeight: 1200,
+      quality: 85,
+      format: 'webp' as const
+    },
+    // Para imágenes de banners/portadas (más grandes, calidad media)
+    banner: {
+      maxWidth: 1920,
+      maxHeight: 1080,
+      quality: 80,
+      format: 'webp' as const
+    },
+    // Para miniaturas (muy pequeñas, calidad reducida)
+    thumbnail: {
+      maxWidth: 300,
+      maxHeight: 300,
+      quality: 75,
+      format: 'webp' as const
+    },
+    // Configuración por defecto para todas las demás imágenes
+    default: {
+      maxWidth: 1600,
+      maxHeight: 1600,
+      quality: 80,
+      format: 'webp' as const
+    }
+  }
+};
 
 @Injectable()
 export class UnifiedFilesService {
@@ -16,11 +62,13 @@ export class UnifiedFilesService {
 
   constructor(
     @Inject(SERVICES.FILES) private readonly filesClient: ClientProxy,
-    private readonly archivoService: ArchivoService
+    private readonly archivoService: ArchivoService,
+    private readonly imageProcessor: ImageProcessorService
   ) {}
 
   /**
    * Sube un archivo al proveedor de almacenamiento y opcionalmente registra sus metadatos
+   * Para imágenes, aplica procesamiento para reducir su tamaño si es necesario
    */
   async uploadFile(
     file: Express.Multer.File,
@@ -33,6 +81,8 @@ export class UnifiedFilesService {
       categoria?: CategoriaArchivo;
       descripcion?: string;
       esPublico?: boolean;
+      imagePreset?: keyof typeof IMAGE_PROCESSING_CONFIG.presets; // Nuevo: preset para procesamiento de imágenes
+      skipImageProcessing?: boolean; // Nuevo: opción para omitir el procesamiento
     }
   ) {
     const startTime = Date.now();
@@ -45,9 +95,49 @@ export class UnifiedFilesService {
     }
 
     try {
+      // Variables para rastrear información de procesamiento
+      let processedFile = file;
+      let processingInfo = null;
+      // Verificar si es una imagen que debe ser procesada
+      const shouldProcessImage = !options?.skipImageProcessing && 
+                               this.imageProcessor.isImage(file.mimetype) && 
+                               file.size > IMAGE_PROCESSING_CONFIG.sizeThreshold;
+
+      // Procesar la imagen si es necesario
+      if (shouldProcessImage) {
+        // Determinar qué preset usar
+        const preset = options?.imagePreset 
+          ? IMAGE_PROCESSING_CONFIG.presets[options.imagePreset]
+          : IMAGE_PROCESSING_CONFIG.presets.default;
+          
+        if (this.isDevelopment) {
+          this.logger.debug(`🖼️ Procesando imagen usando preset ${options?.imagePreset || 'default'}`);
+        }
+        
+        // Procesar la imagen
+        const { buffer, info } = await this.imageProcessor.processImage(file.buffer, file.mimetype, preset);
+        
+        // Actualizar el archivo con el buffer procesado
+        processedFile = {
+          ...file,
+          buffer,
+          size: buffer.length // Actualizar el tamaño
+        };
+        
+        processingInfo = info;
+        
+        if (this.isDevelopment && info.processed) {
+          this.logger.debug({
+            originalSize: formattedOriginalSize,
+            newSize: formatFileSize(buffer.length),
+            reduction: info.reduction,
+            processingTime: info.duration
+          }, '🖼️ Imagen procesada');
+        }
+      }
 
      // Crear una versión optimizada del objeto file para enviar por RabbitMQ
-     const bufferBase64 = file.buffer.toString('base64');
+     const bufferBase64 = processedFile.buffer.toString('base64');
 
       // Solo log de análisis de tamaño en desarrollo
       if (this.isDevelopment) {
@@ -67,11 +157,10 @@ export class UnifiedFilesService {
 
       // Crear una versión optimizada del objeto file para enviar por RabbitMQ
       const optimizedFile = {
-        originalname: file.originalname,
-        mimetype: file.mimetype,
-        size: file.size,
-        // Convertir el buffer a base64, que es más eficiente que un array de bytes
-        bufferBase64: file.buffer.toString('base64')
+        originalname: processedFile.originalname,
+        mimetype: processedFile.mimetype,
+        size: processedFile.size,  // Usar el tamaño procesado
+        bufferBase64: processedFile.buffer.toString('base64')  // Usar el buffer procesado
       };
 
       // 1. Subir el archivo físico
@@ -96,17 +185,19 @@ export class UnifiedFilesService {
       // 2. Si hay información de entidad, crear registro de metadatos
       if (options?.tipoEntidad && options?.entidadId) {
         await this.archivoService.createArchivo({
-          nombre: file.originalname,
+          nombre: processedFile.originalname,  // Usar los datos del archivo procesado
           filename: this.archivoService.extractFilename(fileResponse.filename),
           ruta: fileResponse.filename,
-          tipo: file.mimetype,
-          tamanho: file.size,
+          tipo: processedFile.mimetype,
+          tamanho: processedFile.size,  // Usar el tamaño procesado
           empresaId: options.empresaId,
           categoria: options.categoria || CategoriaArchivo.LOGO,
           tipoEntidad: options.tipoEntidad,
           entidadId: options.entidadId,
           descripcion: options.descripcion || `Archivo para ${options.tipoEntidad}`,
-          esPublico: options.esPublico !== undefined ? options.esPublico : true
+          esPublico: options.esPublico !== undefined ? options.esPublico : true,
+          provider: options.provider,
+          // metadatos: processingInfo ? { imagenProcesada: processingInfo } : undefined
         });
         
         // Solo log en desarrollo
@@ -115,25 +206,27 @@ export class UnifiedFilesService {
         }
       }
 
-      // 3. Construir respuesta enriquecida
+      // Construir respuesta enriquecida
       const response = {
         ...fileResponse,
-        url: this.archivoService.buildFileUrl(fileResponse.filename)
+        url: this.archivoService.buildFileUrl(fileResponse.filename),
+        processed: processingInfo ? processingInfo.processed : false,
+        originalSize: file.size,
+        finalSize: processedFile.size,
+        reduction: processingInfo ? processingInfo.reduction : '0%'
       };
 
-      // Solo log detallado en desarrollo
+      const duration = Date.now() - startTime;
+      
       if (this.isDevelopment) {
-        const duration = Date.now() - startTime;
-        const optimizedFileSize = Buffer.byteLength(bufferBase64);
-        const formattedOptimizedSize = formatFileSize(optimizedFileSize);
-        
         this.logger.debug({
           fileName: file.originalname,
           duration: `${duration}ms`,
           originalSize: formattedOriginalSize,
-          serializedSize: formattedOptimizedSize,
-          reductionPercent: `${(100 - (optimizedFileSize / originalFileSize) * 100).toFixed(2)}%`
-        }, `Proceso de upload completado`);
+          finalSize: formatFileSize(processedFile.size),
+          processed: processingInfo ? true : false,
+          ...(processingInfo && { reduction: processingInfo.reduction })
+        }, `✅ Proceso de upload completado`);
       }
 
 

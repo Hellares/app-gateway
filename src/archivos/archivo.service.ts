@@ -28,6 +28,7 @@ export class ArchivoService {
     descripcion?: string;
     orden?: number;
     esPublico?: boolean;
+    provider?: string;
   }) {
     try {
       this.logger.debug(`Creando registro de archivo: ${data.nombre}`);

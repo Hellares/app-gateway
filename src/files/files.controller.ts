@@ -23,11 +23,15 @@ export class FilesController {
     @UploadedFile() file: Express.Multer.File,
     @Body('provider') provider?: string,
     @Body('tenantId') tenantId?: string,
+    @Body('skipProcessing') skipProcessing?: string, // Nuevo: opción para omitir procesamiento
+    @Body('imagePreset') imagePreset?: string, // Nuevo: preset para procesamiento de imágenes
   ): Promise<UploadFileResponse> {
     try {
       const response = await this.filesService.uploadFile(file, {
         provider,
-        tenantId
+        tenantId,
+        skipImageProcessing: skipProcessing === 'true',
+        imagePreset: imagePreset as any // Convertir string a enum
       });
 
       return {
@@ -38,6 +42,13 @@ export class FilesController {
           size: response.size || file.size,
           url: response.url,
           tenantId: response.tenantId,
+          // Agregar información de procesamiento si existe
+          ...(response.processed && {
+            processed: response.processed,
+            originalSize: response.originalSize,
+            finalSize: response.finalSize,
+            reduction: response.reduction
+          })
         }
       };
     } catch (error) {
@@ -51,6 +62,8 @@ export class FilesController {
     @UploadedFiles() files: Express.Multer.File[],
     @Body('provider') provider?: string,
     @Body('tenantId') tenantId?: string,
+    @Body('skipProcessing') skipProcessing?: string,
+    @Body('imagePreset') imagePreset?: string,
   ): Promise<UploadMultipleResponse> {
     try {
       this.logger.debug(`📤 Iniciando upload múltiple: ${files.length} archivos`);
@@ -59,7 +72,9 @@ export class FilesController {
         try {
           const response = await this.filesService.uploadFile(file, {
             provider,
-            tenantId
+            tenantId,
+            skipImageProcessing: skipProcessing === 'true',
+            imagePreset: imagePreset as any
           });
 
           return {
@@ -68,7 +83,14 @@ export class FilesController {
             size: response.size || file.size,
             url: response.url,
             tenantId: response.tenantId,
-            success: true
+            success: true,
+            // Agregar información de procesamiento si existe
+            ...(response.processed && {
+              processed: response.processed,
+              originalSize: response.originalSize,
+              finalSize: response.finalSize,
+              reduction: response.reduction
+            })
           };
         } catch (error) {
           return {
@@ -96,6 +118,65 @@ export class FilesController {
       };
     } catch (error) {
       throw FileErrorHelper.handleUploadError(error);
+    }
+  }
+
+  // Método específico para optimizar imágenes sin subirlas
+  @Post('optimize-image')
+  @UploadFile('image')
+  async optimizeImage(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('imagePreset') imagePreset?: string,
+    @Body('maxWidth') maxWidth?: string,
+    @Body('maxHeight') maxHeight?: string,
+    @Body('quality') quality?: string,
+    @Body('format') format?: string,
+  ) {
+    try {
+      // Verificar que el archivo es una imagen
+      if (!file.mimetype.startsWith('image/')) {
+        throw new Error('El archivo no es una imagen');
+      }
+      
+      // Crear un servicio del procesador de imágenes temporal
+      const imageProcessor = this.filesService['imageProcessor'];
+      
+      // Configurar opciones personalizadas si se proporcionan
+      const options: any = {};
+      if (imagePreset) {
+        options.imagePreset = imagePreset;
+      } else {
+        if (maxWidth) options.maxWidth = parseInt(maxWidth);
+        if (maxHeight) options.maxHeight = parseInt(maxHeight);
+        if (quality) options.quality = parseInt(quality);
+        if (format) options.format = format;
+      }
+      
+      // Procesar la imagen
+      const { buffer, info } = await imageProcessor.processImage(
+        file.buffer, 
+        file.mimetype, 
+        options
+      );
+      
+      // Devolver la imagen optimizada como un buffer Base64
+      return {
+        success: true,
+        original: {
+          size: file.size,
+          format: info.format,
+          width: info.width,
+          height: info.height
+        },
+        optimized: {
+          size: buffer.length,
+          format: info.newFormat || info.format,
+          reduction: info.reduction,
+          dataUrl: `data:image/${info.newFormat || info.format};base64,${buffer.toString('base64')}`
+        }
+      };
+    } catch (error) {
+      throw FileErrorHelper.handleUploadError(error, file?.originalname);
     }
   }
 

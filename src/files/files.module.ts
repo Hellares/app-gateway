@@ -6,6 +6,7 @@ import { MulterExceptionFilter } from 'src/common/exceptions/multer-exception.fi
 import { RpcCustomExceptionFilter } from 'src/common/exceptions/rpc-custom-exception.filter';
 import { UnifiedFilesService } from './unified-files.service';
 import { ArchivoModule } from 'src/archivos/archivo.module';
+import { ImageProcessorService } from './image-processor.service';
 // import { FileValidator } from './common/validator/file.validator';
 
 @Module({
@@ -17,6 +18,7 @@ import { ArchivoModule } from 'src/archivos/archivo.module';
   providers: [
     // FileValidator,
     UnifiedFilesService,
+    ImageProcessorService,
     {
       provide: APP_FILTER,
       useClass: MulterExceptionFilter,

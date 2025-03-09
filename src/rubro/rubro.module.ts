@@ -7,6 +7,7 @@ import { RateLimitGuard } from 'src/common/guards/rate-limit.guard';
 import { ArchivoModule } from 'src/archivos/archivo.module';
 import { ArchivoService } from 'src/archivos/archivo.service';
 import { UnifiedFilesService } from 'src/files/unified-files.service';
+import { ImageProcessorService } from 'src/files/image-processor.service';
 // import { FileValidator } from 'src/files/common/validator/file.validator';
 
 
@@ -24,7 +25,8 @@ import { UnifiedFilesService } from 'src/files/unified-files.service';
           useValue: DEFAULT_RATE_LIMIT_CONFIG
         },
     RateLimitGuard,
-    UnifiedFilesService
+    UnifiedFilesService,
+    ImageProcessorService,
     // FileValidator,
   ],
 })

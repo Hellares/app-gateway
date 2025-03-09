@@ -100,13 +100,14 @@ async create(
           filename: this.archivoService.extractFilename(uploadedFile.filename),
           ruta: uploadedFile.filename,
           tipo: icono.mimetype,
-          tamanho: icono.size,
+          tamanho: uploadedFile.finalSize,
           empresaId: empresaId,
           categoria: CategoriaArchivo.LOGO,
           tipoEntidad: createRubroDto.nombre,
           entidadId: result.id,
           descripcion: `Icono del rubro ${createRubroDto.nombre}`,
-          esPublico: true
+          esPublico: true,
+          provider: provider,
         });
       }
 
@@ -171,6 +172,7 @@ async create(
         );
       }
       return FileUrlHelper.transformResponse<Rubro>(cachedData.data);
+      // return FileUrlHelper.transformResponse(cachedData.data);
     }
 
     const rubros = await firstValueFrom(
@@ -187,6 +189,7 @@ async create(
     }
 
     return FileUrlHelper.transformResponse<Rubro>(rubros);
+    // return FileUrlHelper.transformResponse(cachedData.data);
   } catch (error) {
     this.logger.error('Error en findAllRubros:', error);
 
@@ -227,6 +230,7 @@ async findDeletedRubros(@Query() paginationDto: PaginationDto) {
     if (cachedData.success && cachedData.data) {
       this.logger.debug('✅ Datos eliminados encontrados en caché');
       return FileUrlHelper.transformResponse<Rubro>(cachedData.data);
+      // return FileUrlHelper.transformResponse(cachedData.data);
     }
 
     // 3. Si no hay datos en caché, obtener de la base de datos
@@ -259,6 +263,7 @@ async findDeletedRubros(@Query() paginationDto: PaginationDto) {
     }
 
     return FileUrlHelper.transformResponse<Rubro>(rubros);
+    // return FileUrlHelper.transformResponse(cachedData.data);
   } catch (error) {
     this.logger.error('❌ Error en findDeletedRubros:', error);
     throw new RpcException(error);
