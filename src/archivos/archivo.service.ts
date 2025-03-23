@@ -29,22 +29,34 @@ export class ArchivoService {
     orden?: number;
     esPublico?: boolean;
     provider?: string;
-  }) {
+  }): Promise<any> {
     try {
       this.logger.debug(`Creando registro de archivo: ${data.nombre}`);
       
       const result = await firstValueFrom(
         this.empresaClient.send('archivo.create', data).pipe(
-          timeout(10000),
+          timeout(3000),
           catchError(error => {
             this.logger.error(`Error al crear archivo en microservicio:`, {
               error: error.message,
               filename: data.nombre
             });
-            throw error;
+            // throw error;
+            // En lugar de lanzar el error, devolvemos un objeto de error
+          return [{ 
+            success: false, 
+            error: error.message,
+            message: 'Error al crear archivo en microservicio'
+          }];
           })
         )
       );
+
+      // Si es un array con un objeto de error, extraerlo
+    if (Array.isArray(result) && result[0]?.error) {
+      this.logger.warn(`Archivo no registrado debido a error: ${result[0].error}`);
+      return result[0];
+    }
       
       this.logger.debug(`Archivo registrado con ID: ${result.id}`);
       return result;
@@ -53,7 +65,12 @@ export class ArchivoService {
         error: error.message,
         data
       });
-      throw error;
+      // En lugar de lanzar el error, devolvemos un objeto
+    return {
+      success: false,
+      error: error.message,
+      message: 'Error al crear archivo'
+    };
     }
   }
 
@@ -131,7 +148,8 @@ export class ArchivoService {
   buildFileUrl(ruta: string): string {
     if (!ruta) return null;
     
-    const storageType = process.env.STORAGE_TYPE || 'firebase';
+    const storageType = process.env.STORAGE_TYPE || 'firebase';;
+    
     
     switch (storageType) {
       case 'firebase':

@@ -97,7 +97,7 @@ export class ImageProcessorService {
         originalSize: originalSize / 1024, 
         newSize: newSize / 1024, 
         reduction 
-      }, `Imagen procesada: ${reduction}% de reducción en ${duration}ms`);
+      }, `Imagen procesada: ${reduction}% de reduccion en ${duration}ms`);
       
       return { buffer: processedBuffer, info };
     } catch (error) {

@@ -50,11 +50,6 @@ import { LoggerModule } from 'nestjs-pino';
         
         // Optimización de serialización
         serializers: {
-          // req: (req) => ({
-          //   id: req.id,
-          //   method: req.method,
-          //   url: req.url,
-          // }),
           req: () => undefined,
           res: (res) => ({
             statusCode: res.statusCode,
