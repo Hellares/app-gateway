@@ -1,13 +1,14 @@
-import { Controller, Delete, Get, Inject, Logger, Param, Post, UploadedFile, UploadedFiles, Body, Query, NotFoundException } from '@nestjs/common';
+import { Controller, Delete, Get, Inject, Logger, Param, Post, UploadedFile, UploadedFiles, Body, Query, NotFoundException, HttpStatus } from '@nestjs/common';
 import { UploadFile } from './common/decorators/file-upload.decorator';
 import { UploadFileResponse, UploadMultipleResponse } from './common/interfaces/file-response.interface';
-import { FileErrorHelper } from './common/helpers/file-error.helper';
+import { FileErrorCode, FileErrorHelper } from './common/helpers/file-error.helper';
 import { UploadFiles } from './common/decorators/file-upload-multiple.decorator';
 import { UnifiedFilesService } from './unified-files.service';
 import { CategoriaArchivo } from 'src/common/enums/categoria-archivo.enum';
 import { ArchivoService } from 'src/archivos/archivo.service';
 import { FileUrlHelper } from './common/helpers/file-url.helper';
 import { formatFileSize } from 'src/common/util/format-file-size.util';
+import { RpcException } from '@nestjs/microservices';
 
 @Controller('files')
 export class FilesController {
@@ -58,127 +59,6 @@ export class FilesController {
   }
 
   //! Nuevo método para subir archivos a un Entidad específico y registrarlos en la base de datos de archivos 
-  // @Post('upload-advanced')
-  // @UploadFile('file')
-  // async uploadFileAdvanced(
-  //   @UploadedFile() file: Express.Multer.File,
-  //   @Body('empresaId') empresaId: string,
-  //   @Body('tipoEntidad') tipoEntidad: string,
-  //   @Body('entidadId') entidadId: string,
-  //   @Body('categoria') categoria?: CategoriaArchivo,
-  //   @Body('descripcion') descripcion?: string,
-  //   @Body('esPublico') esPublico?: boolean,
-  //   @Body('provider') provider?: string,
-  //   @Body('tenantId') tenantId?: string,
-  //   @Body('useAdvancedProcessing') useAdvancedProcessing?: boolean,
-  //   @Body('imagePreset') imagePreset?: 'profile' | 'PRODUCTO' | 'banner' | 'thumbnail' | 'default',
-  //   @Body('async') async?: boolean,
-  //   @Body('skipMetadataRegistration') skipMetadataRegistration?: boolean,
-  //   @Body('skipImageProcessing') skipImageProcessing?: boolean
-  // ) {
-  //   try {
-  //     const startTime = Date.now();
-  //     const fileSize = formatFileSize(file.size);
-      
-  //     this.logger.debug({
-  //       event: 'PYTHON_PROCESSING_START',
-  //       file: {
-  //         name: file.originalname,
-  //         size: fileSize,
-  //         type: file.mimetype
-  //       },
-  //       config: {
-  //         empresaId,
-  //         tipoEntidad,
-  //         entidadId,
-  //         imagePreset: imagePreset || 'default',
-  //         async: async || false
-  //       }
-  //     }, `Iniciando procesamiento Python para ${file.originalname} (${fileSize})`);
-
-
-  //     // Forzar el uso del microservicio Python
-  //     const fileResponse = await this.unifiedFilesService.uploadFile(file, {
-  //       provider: provider || 'firebase',
-  //       tenantId: tenantId || 'admin',
-  //       empresaId,
-  //       tipoEntidad,
-  //       entidadId,
-  //       categoria: categoria || CategoriaArchivo.LOGO,
-  //       descripcion: descripcion || `Archivo para ${tipoEntidad} ${entidadId}`,
-  //       esPublico: esPublico !== undefined ? esPublico : true,
-  //       useAdvancedProcessing: true, // Forzar Python
-  //       imagePreset: imagePreset || 'default',
-  //       async: async === true,
-  //       skipMetadataRegistration: skipMetadataRegistration === true,
-  //       skipImageProcessing: false // Asegurar que se procese la imagen
-  //     });
-
-  //     const duration = Date.now() - startTime;
-  //     const finalSize = formatFileSize(fileResponse.finalSize || file.size);
-      
-  //     this.logger.debug({
-  //       event: 'PYTHON_PROCESSING_COMPLETE',
-  //       file: {
-  //         name: file.originalname,
-  //         originalSize: fileSize,
-  //         finalSize,
-  //         reduction: fileResponse.reduction,
-  //         processingTime: `${duration}ms`
-  //       },
-  //       response: {
-  //         url: fileResponse.url,
-  //         processed: fileResponse.processed,
-  //         status: 'success'
-  //       }
-  //     }, `Procesamiento Python completado: ${file.originalname} (${fileSize} → ${finalSize})`);
-      
-  //     return {
-  //       success: true,
-  //       file: {
-  //         filename: fileResponse.filename,
-  //         originalName: file.originalname,
-  //         size: fileResponse.finalSize || file.size,
-  //         url: fileResponse.url,
-  //         type: file.mimetype,
-  //         processed: true,
-  //         originalSize: file.size,
-  //         finalSize: fileResponse.finalSize,
-  //         reduction: fileResponse.reduction,
-  //         processingTime: fileResponse.processingTime,
-  //         processedWith: 'python',
-  //         processingDetails: {
-  //           preset: imagePreset || 'default',
-  //         }
-  //       },
-  //       metadata: {
-  //         empresaId,
-  //         tipoEntidad,
-  //         entidadId,
-  //         categoria: categoria || CategoriaArchivo.LOGO,
-  //         processingDuration: `${duration}ms`,
-  //         timestamp: new Date().toISOString()
-  //       }
-  //     };
-  //   } catch (error) {
-  //     this.logger.error({
-  //       event: 'PYTHON_PROCESSING_ERROR',
-  //       file: {
-  //         name: file.originalname,
-  //         size: formatFileSize(file.size),
-  //         type: file.mimetype
-  //       },
-  //       error: {
-  //         message: error.message,
-  //         stack: error.stack,
-  //         type: error.constructor.name
-  //       }
-  //     }, `❌ Error en procesamiento Python: ${file.originalname}`);
-      
-  //     throw FileErrorHelper.handleUploadError(error, file.originalname);
-  //   }
-  // }
-
   @Post('upload-advanced')
   @UploadFile('file')
   async uploadFileAdvanced(
@@ -202,14 +82,14 @@ export class FilesController {
       
       // Forzar el uso del microservicio Python
       const fileResponse = await this.unifiedFilesService.uploadFile(file, {
-        provider: provider || 'firebase',
-        tenantId: tenantId || 'admin',
         empresaId,
         tipoEntidad,
         entidadId,
         categoria: categoria || CategoriaArchivo.LOGO,
         descripcion: descripcion || `Archivo para ${tipoEntidad} ${entidadId}`,
         esPublico: esPublico !== undefined ? esPublico : true,
+        provider: provider || 'firebase',
+        tenantId: tenantId || 'admin',
         useAdvancedProcessing: true, // Forzar Python
         imagePreset: imagePreset || 'default',
         async: async === true,
@@ -245,11 +125,43 @@ export class FilesController {
         }
       };
     } catch (error) {
-      this.logger.error(`Error en procesamiento: ${file.originalname}`, error.message);
-      throw FileErrorHelper.handleUploadError(error, file.originalname);
+      //this.logger.error(`Error en procesamiento: ${file.originalname}`, error.message);
+      //throw FileErrorHelper.handleUploadError(error, file.originalname);
+      // Verificar si es un error de cuota
+    // Verificar si es un error de cuota
+if (error instanceof RpcException) {
+  const errorData = error.getError ? error.getError() : error.message;
+  
+  if (typeof errorData === 'object' && 
+      errorData !== null && 
+      'code' in errorData && 
+      errorData.code === 'STORAGE_QUOTA_EXCEEDED') {
+    
+    // Usar una aserción de tipo para indicar la estructura esperada
+    const typedError = errorData as { 
+      code: string; 
+      message: string; 
+      details?: any 
+    };
+    
+    this.logger.warn({
+      file: file.originalname,
+      size: file.size,
+      empresaId: typedError.details?.empresaId,
+      error: 'Cuota excedida'
+    }, `Subida rechazada: cuota excedida`);
+    
+    // Re-lanzar el error con el helper para mantener el formato adecuado
+    throw FileErrorHelper.createError(
+      typedError.message || 'Cuota de almacenamiento excedida',
+      FileErrorCode.QUOTA_EXCEEDED,
+      HttpStatus.FORBIDDEN,
+      typedError.details
+    );
+  }
+}
     }
   }
-
   
 
   
@@ -264,7 +176,7 @@ export class FilesController {
     @Body('imagePreset') imagePreset?: string,
   ): Promise<UploadMultipleResponse> {
     try {
-      this.logger.debug(`📤 Iniciando upload múltiple: ${files.length} archivos`);
+      this.logger.debug(`Iniciando upload multiple: ${files.length} archivos`);
       
       const uploadPromises = files.map(async file => {
         try {
@@ -305,7 +217,7 @@ export class FilesController {
       const successful = results.filter(r => r.success);
       const failed = results.filter(r => !r.success);
 
-      this.logger.debug(`✅ Upload múltiple completado: ${successful.length} exitosos, ${failed.length} fallidos`);
+      this.logger.debug(`Upload multiple completado: ${successful.length} exitosos, ${failed.length} fallidos`);
 
       return {
         success: failed.length === 0,

@@ -1,13 +1,13 @@
 // src/files/services/unified-files.service.ts
-import { Injectable, Inject, Logger, OnModuleInit } from '@nestjs/common';
-import { ClientProxy } from '@nestjs/microservices';
+import { Injectable, Inject, Logger, OnModuleInit, HttpStatus } from '@nestjs/common';
+import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { firstValueFrom, timeout, catchError, Subject } from 'rxjs';
 import {  QUEUES, SERVICES } from 'src/transports/constants';
 import { ArchivoService } from 'src/archivos/archivo.service';
 import { CategoriaArchivo } from 'src/common/enums/categoria-archivo.enum';
 import { formatFileSize } from 'src/common/util/format-file-size.util';
 import { FILE_VALIDATION } from './common/constants/file.validator.constant';
-import { FileErrorHelper } from './common/helpers/file-error.helper';
+import { FileErrorCode, FileErrorHelper } from './common/helpers/file-error.helper';
 import { ImageProcessorService } from './image-processor.service';
 
 const PENDING_CALLBACKS = new Map<string, any>();
@@ -80,6 +80,7 @@ export class UnifiedFilesService{
   constructor(
     @Inject(SERVICES.FILES) private readonly filesClient: ClientProxy,
     @Inject(SERVICES.IMAGE_PROCESSOR) private readonly imageProcessorClient: ClientProxy,
+    @Inject(SERVICES.COMPANY) private readonly empresaClient: ClientProxy,
     private readonly archivoService: ArchivoService,
     private readonly imageProcessor: ImageProcessorService
   ) {
@@ -106,7 +107,7 @@ registerProcessingCallback(
   // Método para manejar las respuestas que llegan de la cola
   handleProcessedImageResponse(data: any): void {
     if (!data) {
-      this.logger.warn('Mensaje vacío recibido');
+      this.logger.warn('Mensaje vacio recibido');
       return;
     }
     
@@ -117,7 +118,7 @@ registerProcessingCallback(
       // Tomar el primer callback pendiente
       const [firstId, callback] = Array.from(this.processingCallbacks.entries())[0];
       
-      this.logger.debug(`Recibida respuesta con ID 'unknown', resolviéndola para: ${firstId}`);
+      this.logger.debug(`Recibida respuesta con ID 'unknown', resolviendola para: ${firstId}`);
       
       if (callback.timeoutId) {
         clearTimeout(callback.timeoutId);
@@ -147,7 +148,7 @@ registerProcessingCallback(
     }
     
     if (!found) {
-      this.logger.warn(`No se encontró callback para procesamiento con ID: ${data.id}`);
+      this.logger.warn(`No se encontro callback para procesamiento con ID: ${data.id}`);
     }
   }
 
@@ -159,20 +160,19 @@ registerProcessingCallback(
 async uploadFile(
   file: Express.Multer.File,
   options?: {
-    provider?: string;
-    tenantId?: string;
     empresaId?: string;
     tipoEntidad?: string;
     entidadId?: string;
     categoria?: CategoriaArchivo;
     descripcion?: string;
     esPublico?: boolean;
-    imagePreset?: keyof typeof IMAGE_PROCESSING_CONFIG.presets;
-    skipImageProcessing?: boolean;
-    // Nuevos parámetros
+    provider?: string;
+    tenantId?: string;
     useAdvancedProcessing?: boolean; // Forzar microservicio Python
+    imagePreset?: keyof typeof IMAGE_PROCESSING_CONFIG.presets;
     async?: boolean; // Procesar de forma asíncrona
     skipMetadataRegistration?: boolean; // Omitir registro de metadatos
+    skipImageProcessing?: boolean;
   }
 ) {
   const startTime = Date.now();
@@ -185,6 +185,10 @@ async uploadFile(
   }
 
   try {
+    //Comprobar cuota antes de procesar
+    if(options?.empresaId){
+      await this.checkStorageQuota(options.empresaId, file.size);
+    }
     // Si se solicita saltar el procesamiento de imágenes
     if (options?.skipImageProcessing) {
       return this.uploadOriginalFile(file, options);
@@ -279,6 +283,7 @@ async uploadFile(
       const fileResponse = await firstValueFrom(
         this.filesClient.send('file.upload.optimized', {
           file: optimizedFile,
+          empresaId: options?.empresaId,
           provider: options?.provider || 'firebase',
           tenantId: options?.tenantId || 'admin'
         }).pipe(
@@ -347,12 +352,41 @@ async uploadFile(
     }
   } catch (error) {
     const duration = Date.now() - startTime;
-    this.logger.error(`Error en upload: ${file.originalname}`, {
-      error: error.message,
-      duration: `${duration}ms`
-    });
-    throw error;
+  
+  if (error instanceof RpcException) {
+    const errorData = error.getError ? error.getError() : error.message;
+    
+    if (
+      typeof errorData === 'object' && 
+      errorData !== null && 
+      'code' in errorData && 
+      errorData.code === 'STORAGE_QUOTA_EXCEEDED'
+    ) {
+      // Utilizar el operador 'in' para verificar si existe la propiedad 'message'
+      const errorMessage = 'message' in errorData 
+        ? String(errorData.message) 
+        : 'Cuota de almacenamiento excedida';
+      
+      this.logger.warn({
+        fileName: file.originalname,
+        size: formattedOriginalSize,
+        empresaId: options?.empresaId,
+        duration: `${duration}ms`,
+        // Verificar si details existe antes de acceder
+        details: 'details' in errorData ? errorData.details : undefined
+      }, `Subida Bloqueada: ${errorMessage}`);
+      
+      throw error;
+    }
   }
+  
+  this.logger.error({
+    error: error.message,
+    duration: `${duration}ms`
+  }, `Error en upload: ${file.originalname}`);
+  
+  throw error;
+}
 }
 
 
@@ -377,7 +411,7 @@ private shouldUseAdvancedProcessing(
   // Si se solicita omitir el registro de metadatos, probablemente sea para un registro inicial
   // En este caso, priorizar velocidad usando Sharp
   if (options?.skipMetadataRegistration) {
-    this.logger.debug(`Usando Sharp para procesamiento rápido (skipMetadataRegistration=true)`);
+    this.logger.debug(`Usando Sharp para procesamiento rapido (skipMetadataRegistration=true)`);
     return false;
   }
   
@@ -565,7 +599,8 @@ private async processWithPythonServiceSync(
         this.filesClient.send('file.upload.optimized', {
           file: optimizedFile,
           provider: options?.provider || 'firebase',
-          tenantId: options?.tenantId || 'admin'
+          tenantId: options?.tenantId || 'admin',
+          empresaId: options?.empresaId,
         }).pipe(
           timeout(FILE_VALIDATION.TIMEOUT),
           catchError(error => {
@@ -1039,5 +1074,49 @@ async getProcessingStatus(id: string): Promise<any> {
         : '0%',
       averageProcessingTimeMs: Math.round(this.processingStats.averageProcessingTime) + 'ms'
     };
+  }
+
+
+
+  private async checkStorageQuota(empresaId: string, fileSize: number): Promise<boolean> {
+    if (!empresaId || !fileSize) {
+      return true;
+    }
+  
+    try {
+      const quotaCheck = await firstValueFrom(
+        this.empresaClient.send('storage.check-quota', {
+          empresaId,
+          fileSize,
+        }).pipe(timeout(5000))
+      );
+  
+      if (!quotaCheck.hasQuota) {
+        this.logger.warn({
+          empresa: empresaId,
+          usage: quotaCheck.usage,
+          limit: quotaCheck.limit,
+          fileSize
+        }, `Cuota excedida para empresa ${empresaId}`);
+        
+        // Lanzar un error con formato específico para cuota excedida
+        throw FileErrorHelper.createError(
+          'Cuota de almacenamiento excedida. Por favor, libere espacio antes de subir más archivos / Contrate un plan Superior.',
+          FileErrorCode.QUOTA_EXCEEDED, // <-- Necesitamos agregar este código
+          HttpStatus.FORBIDDEN, // Usar 403 en lugar de 500
+          {
+            usage: quotaCheck.usage,
+            limit: quotaCheck.limit,
+           fileSize
+          }
+        );
+      }
+  
+      return true;
+    } catch (error) {
+      // Reenviar el error tal cual si ya es un error formateado
+      
+      throw FileErrorHelper.handleUploadError(error);
+    }
   }
 }
