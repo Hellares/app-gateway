@@ -159,7 +159,7 @@ export class ArchivoService {
       case 's3':
         return `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${ruta}`;
       case 'elastika':
-        return `${process.env.ELASTIKA_BASE_URL || 'http://161.132.48.141:3500'}/files/${ruta}`;
+        return `${process.env.ELASTIKA_BASE_URL || 'http://161.132.48.141'}/files/${ruta}`;
       default:
         return `${process.env.API_URL}/uploads/${ruta}`;
     }

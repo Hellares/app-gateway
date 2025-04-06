@@ -200,9 +200,10 @@ async uploadFile(
     }
 
     // Decidir qué método de procesamiento usar
-    const useAdvancedProcessing = this.shouldUseAdvancedProcessing(file, options);
+    const useAdvancedProcessing = this.shouldUseAdvancedProcessing(options);
 
     if (useAdvancedProcessing) {
+      console.log(useAdvancedProcessing);
       // Usar microservicio Python
       if (this.isDevelopment) {
         this.logger.debug(`Usando microservicio Python para procesar: ${file.originalname}`);
@@ -215,7 +216,7 @@ async uploadFile(
         return this.processWithPythonServiceSync(file, options);
       }
     } else {
-      // Usar procesamiento local con Sharp
+      //! => de aqui para abajo si es que  Usamos procesamiento local con Sharp
       if (this.isDevelopment) {
         this.logger.debug(`Usando Sharp para procesar: ${file.originalname}`);
       }
@@ -391,7 +392,7 @@ async uploadFile(
 
 
 private shouldUseAdvancedProcessing(
-  file: Express.Multer.File, 
+  // file: Express.Multer.File, 
   options?: any
 ): boolean {
   // Si el usuario especificó explícitamente
@@ -404,9 +405,10 @@ private shouldUseAdvancedProcessing(
     this.logger.debug(`Procesando localmente imagen de alta prioridad debido a carga del sistema`);
     return false;
   }
+
   
   // Para imágenes pequeñas (<2MB), usar siempre Sharp (más rápido)
-  if (file.size < 2 * 1024 * 1024) return false;
+  // if (file.size < 2 * 1024 * 1024) return false;
   
   // Si se solicita omitir el registro de metadatos, probablemente sea para un registro inicial
   // En este caso, priorizar velocidad usando Sharp
@@ -419,13 +421,13 @@ private shouldUseAdvancedProcessing(
   
   // 1. Por formato: formatos complejos o con transparencia al microservicio
   const complexFormats = ['image/png', 'image/webp', 'image/gif'];
-  if (complexFormats.includes(file.mimetype)) return true;
+  // if (complexFormats.includes(file.mimetype)) return true;
   
   // 2. Por preset: ciertos presets requieren procesamiento avanzado
   if (options?.imagePreset === 'product' || options?.imagePreset === 'banner') return true;
   
   // 3. Por tamaño: imágenes muy grandes (>5MB) al microservicio
-  if (file.size > 5 * 1024 * 1024) return true;
+  // if (file.size > 5 * 1024 * 1024) return true;
   
   // Por defecto, usar Sharp para todo lo demás
   return false;
