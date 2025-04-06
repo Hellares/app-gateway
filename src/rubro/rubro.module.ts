@@ -7,7 +7,8 @@ import { RateLimitGuard } from 'src/common/guards/rate-limit.guard';
 import { ArchivoModule } from 'src/archivos/archivo.module';
 import { ArchivoService } from 'src/archivos/archivo.service';
 import { UnifiedFilesService } from 'src/files/unified-files.service';
-import { ImageProcessorService } from 'src/files/image-processor.service';
+// import { ImageProcessorService } from 'src/files/image-processor.service';
+import { FilesModule } from 'src/files/files.module';
 // import { FileValidator } from 'src/files/common/validator/file.validator';
 
 
@@ -16,7 +17,8 @@ import { ImageProcessorService } from 'src/files/image-processor.service';
   imports: [
     RabbitMQModule,
     RedisModule,
-    ArchivoModule
+    ArchivoModule,
+    FilesModule,
   ],
   controllers: [RubroController],
   providers: [
@@ -25,8 +27,8 @@ import { ImageProcessorService } from 'src/files/image-processor.service';
           useValue: DEFAULT_RATE_LIMIT_CONFIG
         },
     RateLimitGuard,
-    UnifiedFilesService,
-    ImageProcessorService,
+    // UnifiedFilesService,
+    // ImageProcessorService,
     // FileValidator,
   ],
 })

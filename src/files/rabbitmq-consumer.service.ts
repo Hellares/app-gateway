@@ -1,4 +1,3 @@
-// src/files/rabbitmq-consumer.service.ts
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import * as amqp from 'amqplib';
 import { envs } from 'src/config'; // Ajusta según tu estructura

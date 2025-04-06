@@ -6,8 +6,11 @@ import { MulterExceptionFilter } from 'src/common/exceptions/multer-exception.fi
 import { RpcCustomExceptionFilter } from 'src/common/exceptions/rpc-custom-exception.filter';
 import { UnifiedFilesService } from './unified-files.service';
 import { ArchivoModule } from 'src/archivos/archivo.module';
-import { ImageProcessorService } from './image-processor.service';
+// import { ImageProcessorService } from './image-processor.service';
 import { RabbitMQConsumerService } from './rabbitmq-consumer.service';
+import { FileStorageService } from './file-storage.service';
+import { ProcessingManagerService } from './processing-manager.service';
+import { ImageProcessingService } from './image-processing.service';
 
 
 @Module({
@@ -21,7 +24,11 @@ import { RabbitMQConsumerService } from './rabbitmq-consumer.service';
   providers: [
     // FileValidator,
     UnifiedFilesService,
-    ImageProcessorService,
+    // ImageProcessorService,
+    // Servicios especializados
+    FileStorageService,
+    ProcessingManagerService,
+    ImageProcessingService,
     RabbitMQConsumerService, // Añadimos el nuevo servicio consumidor
     {
       provide: APP_FILTER,
@@ -32,7 +39,9 @@ import { RabbitMQConsumerService } from './rabbitmq-consumer.service';
       useClass: RpcCustomExceptionFilter,
     }
   ],
-  exports: [UnifiedFilesService],
+  exports: [
+    UnifiedFilesService,
+  ],
 })
 export class FilesModule {}
 

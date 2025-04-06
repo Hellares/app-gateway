@@ -9,6 +9,7 @@ import { ArchivoService } from 'src/archivos/archivo.service';
 import { FileUrlHelper } from './common/helpers/file-url.helper';
 import { formatFileSize } from 'src/common/util/format-file-size.util';
 import { RpcException } from '@nestjs/microservices';
+import { UploadFileDto } from './dto/upload-file.dto';
 @Controller('files')
 export class FilesController {
   private readonly logger = new Logger(FilesController.name);
@@ -60,43 +61,31 @@ export class FilesController {
     }
   }
 
-  //! Nuevo método para subir archivos a un Entidad específico y registrarlos en la base de datos de archivos 
+  // //! Nuevo método para subir archivos a un Entidad específico y registrarlos en la base de datos de archivos 
   @Post('upload-advanced')
   @UploadFile('file')
   async uploadFileAdvanced(
     @UploadedFile() file: Express.Multer.File,
-    @Body('empresaId') empresaId: string,
-    @Body('tipoEntidad') tipoEntidad: string,
-    @Body('entidadId') entidadId: string,
-    @Body('categoria') categoria?: CategoriaArchivo,
-    @Body('descripcion') descripcion?: string,
-    @Body('esPublico') esPublico?: boolean,
-    @Body('provider') provider?: string,
-    @Body('tenantId') tenantId?: string,
-    @Body('useAdvancedProcessing') useAdvancedProcessing?: boolean,
-    @Body('imagePreset') imagePreset?: 'profile' | 'PRODUCTO' | 'banner' | 'thumbnail' | 'default',
-    @Body('async') async?: boolean,
-    @Body('skipMetadataRegistration') skipMetadataRegistration?: boolean,
-    @Body('skipImageProcessing') skipImageProcessing?: boolean
+    @Body() uploadFileDto: UploadFileDto,
   ) {
     try {
       this.logger.debug(`Procesando imagen: ${file.originalname} (${file.size} bytes)`);
       
       // Forzar el uso del microservicio Python
       const fileResponse = await this.unifiedFilesService.uploadFile(file, {
-        empresaId,
-        tipoEntidad,
-        entidadId,
-        categoria: categoria || CategoriaArchivo.LOGO,
-        descripcion: descripcion || `Archivo para ${tipoEntidad} ${entidadId}`,
-        esPublico: esPublico !== undefined ? esPublico : true,
-        provider: provider || 'firebase',
-        tenantId: tenantId || 'admin',
-        useAdvancedProcessing: useAdvancedProcessing, // Forzar Python
-        imagePreset: imagePreset || 'default',
-        //async: async === true,
-        skipMetadataRegistration: skipMetadataRegistration === true, // Importante: respeta el valor que llega
-        skipImageProcessing: skipImageProcessing === true
+        empresaId: uploadFileDto.empresaId,
+        tipoEntidad: uploadFileDto.tipoEntidad,
+        entidadId: uploadFileDto.entidadId,
+        categoria: uploadFileDto.categoria || CategoriaArchivo.LOGO,
+        descripcion: uploadFileDto.descripcion || `Archivo para ${uploadFileDto.tipoEntidad} ${uploadFileDto.entidadId}`,
+        esPublico: uploadFileDto.esPublico !== undefined ? uploadFileDto.esPublico : true,
+        provider: uploadFileDto.provider || 'firebase',
+        tenantId: uploadFileDto.tenantId || 'admin',
+        useAdvancedProcessing: uploadFileDto.useAdvancedProcessing,
+        imagePreset: uploadFileDto.imagePreset || 'default',
+        async: uploadFileDto.async === true,
+        skipMetadataRegistration: uploadFileDto.skipMetadataRegistration === true, // Importante: respeta el valor que llega
+        skipImageProcessing: uploadFileDto.skipImageProcessing === true
       });
       
       this.logger.debug(`Imagen procesada: ${file.originalname}`);
@@ -117,16 +106,16 @@ export class FilesController {
           finalSize: fileResponse.finalSize,
           reduction: fileResponse.reduction,
           processingTime: fileResponse.processingTime,
-          processedWith: useAdvancedProcessing,
+          processedWith: fileResponse.pythonProcessed ? 'GOLAND' : 'sharp',
           processingDetails: {
-            preset: imagePreset || 'default',
+            preset: uploadFileDto.imagePreset || 'default',
           }
         },
         metadata: {
-          empresaId,
-          tipoEntidad,
-          entidadId,
-          categoria: categoria || CategoriaArchivo.LOGO
+          empresaId: uploadFileDto.empresaId,
+          tipoEntidad: uploadFileDto.tipoEntidad,
+          entidadId: uploadFileDto.entidadId,
+          categoria: uploadFileDto.categoria || CategoriaArchivo.LOGO
         }
       };
     } catch (error) {
@@ -164,118 +153,13 @@ export class FilesController {
       }
     }
   }
-
-  // @Post('upload-advanced')
-  // @UploadFile('file')
-  // async uploadFileAdvanced(
-  //   @UploadedFile() file: Express.Multer.File,
-  //   @Body() uploadFileDto: UploadFileDto,
-  // ) {
-  //   try {
-  //     this.logger.debug(`Procesando imagen: ${file.originalname} (${file.size} bytes)`);
-      
-  //     // Forzar el uso del microservicio Python
-  //     const fileResponse = await this.unifiedFilesService.uploadFile(file, {
-  //       empresaId: uploadFileDto.empresaId,
-  //       tipoEntidad: uploadFileDto.tipoEntidad,
-  //       entidadId: uploadFileDto.entidadId,
-  //       categoria: uploadFileDto.categoria || CategoriaArchivo.LOGO,
-  //       descripcion: uploadFileDto.descripcion || `Archivo para ${uploadFileDto.tipoEntidad} ${uploadFileDto.entidadId}`,
-  //       esPublico: uploadFileDto.esPublico !== undefined ? uploadFileDto.esPublico : true,
-  //       provider: uploadFileDto.provider || 'firebase',
-  //       tenantId: uploadFileDto.tenantId || 'admin',
-  //       useAdvancedProcessing: true, // Forzar Python
-  //       imagePreset: uploadFileDto.imagePreset || 'default',
-  //       //async: async === true,
-  //       skipMetadataRegistration: uploadFileDto.skipMetadataRegistration === true, // Importante: respeta el valor que llega
-  //       skipImageProcessing: uploadFileDto.skipImageProcessing === true
-  //     });
-      
-  //     this.logger.debug(`Imagen procesada: ${file.originalname}`);
-
-  //     return {
-  //       success: true,
-  //       totalProcessed: 1,
-  //       successful: 1,
-  //       failed: 0,
-  //       file: {
-  //         filename: fileResponse.filename,
-  //         originalName: file.originalname,
-  //         size: fileResponse.finalSize || file.size,
-  //         url: fileResponse.url,
-  //         type: file.mimetype,
-  //         processed: fileResponse.processed,
-  //         originalSize: file.size,
-  //         finalSize: fileResponse.finalSize,
-  //         reduction: fileResponse.reduction,
-  //         processingTime: fileResponse.processingTime,
-  //         processedWith: 'python',
-  //         processingDetails: {
-  //           preset: uploadFileDto.imagePreset || 'default',
-  //         }
-  //       },
-  //       metadata: {
-  //         empresaId: uploadFileDto.empresaId,
-  //         tipoEntidad: uploadFileDto.tipoEntidad,
-  //         entidadId: uploadFileDto.entidadId,
-  //         categoria: uploadFileDto.categoria || CategoriaArchivo.LOGO
-  //       }
-  //     };
-  //   } catch (error) {
-  //     // Verificar si es un error de cuota
-  //     if (error instanceof RpcException) {
-  //       const errorData = error.getError ? error.getError() : error.message;
-
-  //       if (typeof errorData === 'object' && 
-  //           errorData !== null && 
-  //           'code' in errorData && 
-  //           errorData.code === 'STORAGE_QUOTA_EXCEEDED') {
-            
-  //         // Usar una aserción de tipo para indicar la estructura esperada
-  //         const typedError = errorData as { 
-  //           code: string; 
-  //           message: string; 
-  //           details?: any 
-  //         };
-
-  //         this.logger.warn({
-  //           file: file.originalname,
-  //           size: file.size,
-  //           empresaId: typedError.details?.empresaId,
-  //           error: 'Cuota excedida'
-  //         }, `Subida rechazada: cuota excedida`);
-
-  //         // Re-lanzar el error con el helper para mantener el formato adecuado
-  //         throw FileErrorHelper.createError(
-  //           typedError.message || 'Cuota de almacenamiento excedida',
-  //           FileErrorCode.QUOTA_EXCEEDED,
-  //           HttpStatus.FORBIDDEN,
-  //           typedError.details
-  //         );
-  //       }
-  //     }
-  //   }
-  // }
   
-
 
   @Post('upload-multiple-advanced')
   @UploadFiles('files')
   async uploadMultipleFilesAdvanced(
     @UploadedFiles() files: Express.Multer.File[],
-    @Body('empresaId') empresaId: string,
-    @Body('tipoEntidad') tipoEntidad: string,
-    @Body('entidadId') entidadId: string,
-    @Body('categoria') categoria?: CategoriaArchivo,
-    @Body('descripcion') descripcion?: string,
-    @Body('esPublico') esPublico?: boolean,
-    @Body('provider') provider?: string,
-    @Body('tenantId') tenantId?: string,
-    @Body('useAdvancedProcessing') useAdvancedProcessing?: boolean,
-    @Body('imagePreset') imagePreset?: 'profile' | 'PRODUCTO' | 'banner' | 'thumbnail' | 'default',
-    @Body('async') async?: boolean,
-    @Body('skipMetadataRegistration') skipMetadataRegistration?: boolean,
-    @Body('skipImageProcessing') skipImageProcessing?: boolean
+    @Body() uploadMultipleDto: UploadFileDto
   ): Promise<UploadMultipleResponse> {
     try {
       this.logger.debug(`Iniciando upload multiple avanzado: ${files.length} archivos`);    
@@ -283,19 +167,19 @@ export class FilesController {
       const uploadPromises = files.map(async file => {
         try {
           const response = await this.unifiedFilesService.uploadFile(file, {
-            empresaId,
-            tipoEntidad,
-            entidadId,
-            categoria: categoria || CategoriaArchivo.LOGO,
-            descripcion: descripcion || `Archivo para ${tipoEntidad} ${entidadId}`,
-            esPublico: esPublico !== undefined ? esPublico : true,
-            provider: provider || 'firebase',
-            tenantId: tenantId || 'admin',
-            useAdvancedProcessing: true,
-            imagePreset: imagePreset || 'default',
-            async: async === true,
-            skipMetadataRegistration: skipMetadataRegistration === true,
-            skipImageProcessing: skipImageProcessing === true
+            empresaId: uploadMultipleDto.empresaId,
+            tipoEntidad: uploadMultipleDto.tipoEntidad,
+            entidadId: uploadMultipleDto.entidadId,
+            categoria: uploadMultipleDto.categoria || CategoriaArchivo.LOGO,
+            descripcion: uploadMultipleDto.descripcion || `Archivo para ${uploadMultipleDto.tipoEntidad} ${uploadMultipleDto.entidadId}`,
+            esPublico: uploadMultipleDto.esPublico !== undefined ? uploadMultipleDto.esPublico : true,
+            provider: uploadMultipleDto.provider || 'firebase',
+            tenantId: uploadMultipleDto.tenantId || 'admin',
+            useAdvancedProcessing: uploadMultipleDto.useAdvancedProcessing,
+            imagePreset: uploadMultipleDto.imagePreset || 'default',
+            async: uploadMultipleDto.async === true,
+            skipMetadataRegistration: uploadMultipleDto.skipMetadataRegistration === true,
+            skipImageProcessing: uploadMultipleDto.skipImageProcessing === true
           });
 
           return {
@@ -341,10 +225,10 @@ export class FilesController {
         failed: failed.length,
         files: results,
         metadata: {
-          empresaId,
-          tipoEntidad,
-          entidadId,
-          categoria: categoria || CategoriaArchivo.LOGO
+          empresaId: uploadMultipleDto.empresaId,
+          tipoEntidad: uploadMultipleDto.tipoEntidad,
+          entidadId: uploadMultipleDto.entidadId,
+          categoria: uploadMultipleDto.categoria || CategoriaArchivo.LOGO
         }
       };
     } catch (error) {
