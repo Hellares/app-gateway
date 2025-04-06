@@ -861,7 +861,6 @@ private createImageProcessingMessage(
   };
 }
 
-
 /**
  * Estima el tiempo de procesamiento basado en el tamaño
  */

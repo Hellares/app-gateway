@@ -38,6 +38,9 @@ export class FilesController {
 
       return {
         success: true,
+        totalProcessed: 1,
+        successful: 1,
+        failed: 0,
         file: {
           filename: response.filename,
           originalName: response.originalName || file.originalname,
@@ -92,15 +95,18 @@ export class FilesController {
         tenantId: tenantId || 'admin',
         useAdvancedProcessing: true, // Forzar Python
         imagePreset: imagePreset || 'default',
-        async: async === true,
+        //async: async === true,
         skipMetadataRegistration: skipMetadataRegistration === true, // Importante: respeta el valor que llega
         skipImageProcessing: skipImageProcessing === true
       });
       
       this.logger.debug(`Imagen procesada: ${file.originalname}`);
-      
+
       return {
         success: true,
+        totalProcessed: 1,
+        successful: 1,
+        failed: 0,
         file: {
           filename: fileResponse.filename,
           originalName: file.originalname,
@@ -125,8 +131,6 @@ export class FilesController {
         }
       };
     } catch (error) {
-      //this.logger.error(`Error en procesamiento: ${file.originalname}`, error.message);
-      //throw FileErrorHelper.handleUploadError(error, file.originalname);
       // Verificar si es un error de cuota
     // Verificar si es un error de cuota
 if (error instanceof RpcException) {
@@ -164,72 +168,100 @@ if (error instanceof RpcException) {
   }
   
 
-  
 
-  @Post('upload-multiple')
-  @UploadFiles('files')
-  async uploadMultipleFiles(
-    @UploadedFiles() files: Express.Multer.File[],
-    @Body('provider') provider?: string,
-    @Body('tenantId') tenantId?: string,
-    @Body('skipProcessing') skipProcessing?: string,
-    @Body('imagePreset') imagePreset?: string,
-  ): Promise<UploadMultipleResponse> {
-    try {
-      this.logger.debug(`Iniciando upload multiple: ${files.length} archivos`);
-      
-      const uploadPromises = files.map(async file => {
-        try {
-          const response = await this.unifiedFilesService.uploadFile(file, {
-            provider,
-            tenantId,
-            skipImageProcessing: skipProcessing === 'true',
-            imagePreset: imagePreset as any
-          });
+  @Post('upload-multiple-advanced')
+@UploadFiles('files')
+async uploadMultipleFilesAdvanced(
+  @UploadedFiles() files: Express.Multer.File[],
+  @Body('empresaId') empresaId: string,
+  @Body('tipoEntidad') tipoEntidad: string,
+  @Body('entidadId') entidadId: string,
+  @Body('categoria') categoria?: CategoriaArchivo,
+  @Body('descripcion') descripcion?: string,
+  @Body('esPublico') esPublico?: boolean,
+  @Body('provider') provider?: string,
+  @Body('tenantId') tenantId?: string,
+  @Body('useAdvancedProcessing') useAdvancedProcessing?: boolean,
+  @Body('imagePreset') imagePreset?: 'profile' | 'PRODUCTO' | 'banner' | 'thumbnail' | 'default',
+  @Body('async') async?: boolean,
+  @Body('skipMetadataRegistration') skipMetadataRegistration?: boolean,
+  @Body('skipImageProcessing') skipImageProcessing?: boolean
+): Promise<UploadMultipleResponse> {
+  try {
+    this.logger.debug(`Iniciando upload multiple avanzado: ${files.length} archivos`);
 
-          return {
-            filename: response.filename,
-            originalName: response.originalName || file.originalname,
-            size: response.size || file.size,
-            url: response.url,
-            tenantId: response.tenantId,
-            success: true,
-            // Agregar información de procesamiento si existe
-            ...(response.processed && {
-              processed: response.processed,
-              originalSize: response.originalSize,
-              finalSize: response.finalSize,
-              reduction: response.reduction
-            })
-          };
-        } catch (error) {
-          return {
-            filename: file.originalname,
-            originalName: file.originalname,
-            size: file.size,
-            error: error.message,
-            success: false
-          };
-        }
-      });
+    
+    const uploadPromises = files.map(async file => {
+      try {
+        const response = await this.unifiedFilesService.uploadFile(file, {
+          empresaId,
+          tipoEntidad,
+          entidadId,
+          categoria: categoria || CategoriaArchivo.LOGO,
+          descripcion: descripcion || `Archivo para ${tipoEntidad} ${entidadId}`,
+          esPublico: esPublico !== undefined ? esPublico : true,
+          provider: provider || 'firebase',
+          tenantId: tenantId || 'admin',
+          useAdvancedProcessing: true,
+          imagePreset: imagePreset || 'default',
+          async: async === true,
+          skipMetadataRegistration: skipMetadataRegistration === true,
+          skipImageProcessing: skipImageProcessing === true
+        });
 
-      const results = await Promise.all(uploadPromises);
-      const successful = results.filter(r => r.success);
-      const failed = results.filter(r => !r.success);
+        return {
+          filename: response.filename,
+          originalName: response.originalName || file.originalname,
+          size: response.finalSize || file.size,
+          url: response.url,
+          tenantId: response.tenantId,
+          type: file.mimetype,
+          success: true,
+          // Agregar información de procesamiento si existe
+          ...(response.processed && {
+            processed: response.processed,
+            originalSize: response.originalSize,
+            finalSize: response.finalSize,
+            reduction: response.reduction,
+            processingTime: response.processingTime,
+            processedWith: response.pythonProcessed ? 'python' : 'sharp'
+          })
+        };
+      } catch (error) {
+        this.logger.error(`Error al procesar archivo: ${file.originalname}`, error);
+        return {
+          filename: file.originalname,
+          originalName: file.originalname,
+          size: file.size,
+          error: error.message,
+          success: false
+        };
+      }
+    });
 
-      this.logger.debug(`Upload multiple completado: ${successful.length} exitosos, ${failed.length} fallidos`);
+    const results = await Promise.all(uploadPromises);
+    const successful = results.filter(r => r.success);
+    const failed = results.filter(r => !r.success);
 
-      return {
-        success: failed.length === 0,
-        totalProcessed: results.length,
-        successful: successful.length,
-        failed: failed.length,
-        files: results
-      };
-    } catch (error) {
-      throw FileErrorHelper.handleUploadError(error);
-    }
+    this.logger.debug(`Upload multiple avanzado completado: ${successful.length} exitosos, ${failed.length} fallidos`);
+
+    return {
+      success: failed.length === 0,
+      totalProcessed: results.length,
+      successful: successful.length,
+      failed: failed.length,
+      files: results,
+      metadata: {
+        empresaId,
+        tipoEntidad,
+        entidadId,
+        categoria: categoria || CategoriaArchivo.LOGO
+      }
+    };
+  } catch (error) {
+    throw FileErrorHelper.handleUploadError(error);
   }
+}
 
   // Método específico para optimizar imágenes sin subirlas
   @Post('optimize-image')
@@ -290,21 +322,21 @@ if (error instanceof RpcException) {
     }
   }
 
-  @Delete(':filename')
-  async deleteFile(
-    @Param('filename') filename: string,
-    @Body('provider') provider?: string,
-    @Body('tenantId') tenantId?: string,
-  ) {
-    try {
-      return await this.unifiedFilesService.deleteFile(filename, {
-        provider,
-        tenantId
-      });
-    } catch (error) {
-      throw FileErrorHelper.handleDeleteError(error, filename);
-    }
-  }
+  // @Delete(':filename')
+  // async deleteFile(
+  //   @Param('filename') filename: string,
+  //   @Body('provider') provider?: string,
+  //   @Body('tenantId') tenantId?: string,
+  // ) {
+  //   try {
+  //     return await this.unifiedFilesService.deleteFile(filename, {
+  //       provider,
+  //       tenantId
+  //     });
+  //   } catch (error) {
+  //     throw FileErrorHelper.handleDeleteError(error, filename);
+  //   }
+  // }
 
   @Get(':filename')
   async getFile(

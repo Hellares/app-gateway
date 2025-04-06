@@ -1,3 +1,5 @@
+import { CategoriaArchivo } from "src/common/enums/categoria-archivo.enum";
+
 export interface FileInfo {
   filename: string;
   originalName: string;
@@ -11,6 +13,9 @@ export interface FileInfo {
 
 export interface UploadFileResponse {
   success: boolean;
+  totalProcessed: number;
+  successful: number;
+  failed: number;
   file: FileInfo;
 }
 
@@ -20,4 +25,10 @@ export interface UploadMultipleResponse {
   successful: number;
   failed: number;
   files: FileInfo[];
+  metadata?: {
+    empresaId?: string;
+    tipoEntidad?: string;
+    entidadId?: string;
+    categoria?: CategoriaArchivo;
+  };
 }
