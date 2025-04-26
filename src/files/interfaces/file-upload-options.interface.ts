@@ -19,7 +19,7 @@ export interface FileUploadOptions {
   
   // Opciones de procesamiento
   useAdvancedProcessing?: boolean;
-  imagePreset?: 'profile' | 'PRODUCTO' | 'banner' | 'thumbnail' | 'default';
+  imagePreset?: 'profile' | 'producto' | 'servicio' | 'banner' | 'thumbnail' | 'default';
   async?: boolean;
   
   // Configuración de comportamiento

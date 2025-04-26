@@ -5,6 +5,7 @@ import { ProcessingManagerService } from './processing-manager.service';
 import { ArchivoService } from 'src/archivos/archivo.service';
 import { CategoriaArchivo } from 'src/common/enums/categoria-archivo.enum';
 import { FileUploadOptions } from './interfaces/file-upload-options.interface';
+import { url } from 'inspector';
 
 
 @Injectable()
@@ -108,12 +109,15 @@ export class UnifiedFilesService {
     // Construir respuesta
     return {
       ...fileResponse,
-      url: this.archivoService.buildFileUrl(fileResponse.filename),
+      // url: this.archivoService.buildFileUrl(fileResponse.filename),
+      url: this.archivoService.buildFileUrl(fileResponse.filename, {
+        provider: options?.provider
+      }),
       originalName: file.originalname,
       originalSize: file.size,
       finalSize: file.size,
       processed: false,
-      reduction: '0%'
+      reduction: '0%',
     };
   }
 
@@ -141,7 +145,7 @@ export class UnifiedFilesService {
       eliminarMetadatos?: boolean;
     }
   ) {
-    const fileResult = await this.fileStorage.deleteFile(filename, options);
+    const fileResult = await this.fileStorage.deleteFile(filename);
     
     // Eliminar metadatos si se solicita
     if (options?.eliminarMetadatos !== false) {
@@ -149,19 +153,58 @@ export class UnifiedFilesService {
       const baseFilename = this.archivoService.extractFilename(filename);
       
       try {
-        await this.archivoService.deleteArchivo(baseFilename);
+        await this.archivoService.deleteArchivo(filename);
         
         if (this.isDevelopment) {
           this.logger.debug(`Metadatos eliminados para: ${baseFilename}`);
         }
+      return fileResult;
       } catch (error) {
         if (this.isDevelopment) {
-          this.logger.warn(`No se pudieron eliminar metadatos para: ${baseFilename}`, error.message);
+          this.logger.warn(`No se pudieron eliminar metadatos para: `, error.message);
         }
       }
-    }
     
+  
     return fileResult;
+    }
+  }
+
+  async deleteMultipleFiles(
+    filenames: string[],
+    options?: {
+      provider?: string;
+      tenantId?: string;
+      eliminarMetadatos?: boolean;
+    }
+  ) {
+    const results = {
+      deletedFiles: [],
+      failedFiles: []
+    };
+  
+    // Procesar cada archivo para eliminar
+    await Promise.all(
+      filenames.map(async (filename) => {
+        try {
+          // Usar el método existente para eliminar cada archivo
+          await this.deleteFile(filename, options);
+          results.deletedFiles.push(filename);
+        } catch (error) {
+          this.logger.error(`Error al eliminar archivo ${filename}:`, error);
+          results.failedFiles.push({
+            filename,
+            error: error.message || 'Error desconocido'
+          });
+        }
+      })
+    );
+  
+    if (this.isDevelopment) {
+      this.logger.debug(`Eliminados ${results.deletedFiles.length} archivos, fallaron ${results.failedFiles.length}`);
+    }
+  
+    return results;
   }
 
   /**
@@ -174,7 +217,7 @@ export class UnifiedFilesService {
       // Enriquecer con URLs
       return archivos.map(archivo => ({
         ...archivo,
-        url: this.archivoService.buildFileUrl(archivo.ruta)
+        url: this.archivoService.buildFileUrl(archivo.ruta),
       }));
     } catch (error) {
       this.logger.error(`Error al obtener archivos para ${tipoEntidad} ${entidadId}`, {
@@ -183,6 +226,44 @@ export class UnifiedFilesService {
       throw error;
     }
   }
+
+  /**
+ * Lista archivos por tenantId
+ */
+async listFiles(
+  tenantId: string,
+  options?: {
+    provider?: string;
+  }
+) {
+  const startTime = Date.now();
+  
+  try {
+    if (!tenantId) {
+      throw new Error('Se requiere un tenantId para listar archivos');
+    }
+    
+    const result = await this.fileStorage.listFiles(tenantId, options);
+    
+    const duration = Date.now() - startTime;
+    
+    if (this.isDevelopment) {
+      this.logger.debug(`Archivos listados en ${duration}ms: ${result.summary.count} archivos para ${tenantId}`);
+    }
+    
+    // Enriquecer con URLs
+    result.files = result.files.map(files => ({
+      ...files,
+      // url: this.archivoService.buildFileUrl(files.filename)
+    }));
+    
+    return result;
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    this.logger.error(`Error al listar archivos para ${tenantId} en ${duration}ms`, error);
+    throw error;
+  }
+}
   
   /**
    * Obtiene el estado de un procesamiento asíncrono
@@ -204,4 +285,6 @@ export class UnifiedFilesService {
   handleProcessedImageResponse(data: any): void {
     this.processingManager.handleProcessedImageResponse(data);
   }
+
+ 
 }

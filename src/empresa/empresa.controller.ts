@@ -36,138 +36,138 @@ export class EmpresaController {
   }
 
 
-@Get(':id/archivos')
-async getEmpresaArchivos(
-  @Param('id') empresaId: string,
-  @Query() archivosByEmpresaDto: ArchivosByEmpresaDto
-) {
-  const { page = 1, limit = 10, categoria, provider } = archivosByEmpresaDto;
-  const cacheKey = CACHE_KEYS.ARCHIVO.PAGINATED_BY_EMPRESA(empresaId, page, limit, categoria);
+// @Get(':id/archivos')
+// async getEmpresaArchivos(
+//   @Param('id') empresaId: string,
+//   @Query() archivosByEmpresaDto: ArchivosByEmpresaDto
+// ) {
+//   const { page = 1, limit = 10, categoria, provider } = archivosByEmpresaDto;
+//   const cacheKey = CACHE_KEYS.ARCHIVO.PAGINATED_BY_EMPRESA(empresaId, page, limit, categoria);
   
-  try {
-    // Verificar cache primero
-    const cachedData = await this.redisService.get(cacheKey);
-    if (cachedData.success) {
-      // Si los datos están próximos a expirar (menos de 1 minuto)
-      // refrescar asincrónicamente para el siguiente request
-      if (cachedData.details?.ttl && cachedData.details.ttl < 60) {
-        this.refreshArchivoCache(cacheKey, archivosByEmpresaDto, empresaId)
-          .catch(err => this.logger.error('Error refreshing archivos cache:', err));
-      }
-      // Directamente devolver los datos cacheados
-      return cachedData.data;
-    }
+//   try {
+//     // Verificar cache primero
+//     const cachedData = await this.redisService.get(cacheKey);
+//     if (cachedData.success) {
+//       // Si los datos están próximos a expirar (menos de 1 minuto)
+//       // refrescar asincrónicamente para el siguiente request
+//       if (cachedData.details?.ttl && cachedData.details.ttl < 60) {
+//         this.refreshArchivoCache(cacheKey, archivosByEmpresaDto, empresaId)
+//           .catch(err => this.logger.error('Error refreshing archivos cache:', err));
+//       }
+//       // Directamente devolver los datos cacheados
+//       return cachedData.data;
+//     }
 
-    // Si no hay en caché, obtener de microservicio
-    const payload = { 
-      paginationDto: { page, limit }, 
-      empresaId, 
-      categoria 
-    };
+//     // Si no hay en caché, obtener de microservicio
+//     const payload = { 
+//       paginationDto: { page, limit }, 
+//       empresaId, 
+//       categoria 
+//     };
     
-    const response = await firstValueFrom(
-      this.companiesClient.send('archivo.findByEmpresa', payload)
-    );
+//     const response = await firstValueFrom(
+//       this.companiesClient.send('archivo.findByEmpresa', payload)
+//     );
 
-    // Verificar si hay datos
-    if (!response || !response.data || !Array.isArray(response.data)) {
-      const emptyResponse = {
-        data: [],
-        metadata: {
-          total: 0,
-          page,
-          limit,
-          totalPages: 0
-        }
-      };
+//     // Verificar si hay datos
+//     if (!response || !response.data || !Array.isArray(response.data)) {
+//       const emptyResponse = {
+//         data: [],
+//         metadata: {
+//           total: 0,
+//           page,
+//           limit,
+//           totalPages: 0
+//         }
+//       };
       
-      // Guardar en caché el resultado vacío
-      this.redisService.set(
-        cacheKey,
-        emptyResponse,
-        REDIS_GATEWAY_CONFIG.LOCAL_CACHE.TTL
-      ).catch(e => this.logger.error('Error caching empty archivos:', e));
+//       // Guardar en caché el resultado vacío
+//       this.redisService.set(
+//         cacheKey,
+//         emptyResponse,
+//         REDIS_GATEWAY_CONFIG.LOCAL_CACHE.TTL
+//       ).catch(e => this.logger.error('Error caching empty archivos:', e));
       
-      return emptyResponse;
-    }
+//       return emptyResponse;
+//     }
 
-    // Generar URLs para los archivos 
-    const archivosConUrl = response.data.map(archivo => ({
-      ...archivo,
-      url: FileUrlHelper.getFileUrl(archivo.ruta || archivo.filename, {
-        tenantId: archivo.tenantId,
-        provider
-      })
-    }));
+//     // Generar URLs para los archivos 
+//     const archivosConUrl = response.data.map(archivo => ({
+//       ...archivo,
+//       url: FileUrlHelper.getFileUrl(archivo.ruta || archivo.filename, {
+//         tenantId: archivo.tenantId,
+//         provider
+//       })
+//     }));
 
-    // Preparar respuesta final
-    const formattedResponse = {
-      data: archivosConUrl,
-      metadata: response.metadata
-    };
+//     // Preparar respuesta final
+//     const formattedResponse = {
+//       data: archivosConUrl,
+//       metadata: response.metadata
+//     };
     
-    // Guardar en caché
-    this.redisService.set(
-      cacheKey,
-      formattedResponse,
-      REDIS_GATEWAY_CONFIG.LOCAL_CACHE.TTL
-    ).catch(e => this.logger.error('Error caching archivos:', e));
+//     // Guardar en caché
+//     this.redisService.set(
+//       cacheKey,
+//       formattedResponse,
+//       REDIS_GATEWAY_CONFIG.LOCAL_CACHE.TTL
+//     ).catch(e => this.logger.error('Error caching archivos:', e));
     
-    return formattedResponse;
-  } catch (error) {
-    this.logger.error(`Error al obtener archivos de empresa ${empresaId}:`, {
-      error: error.message,
-      stack: error.stack
-    });
-    throw new RpcException(error);
-  }
-}
+//     return formattedResponse;
+//   } catch (error) {
+//     this.logger.error(`Error al obtener archivos de empresa ${empresaId}:`, {
+//       error: error.message,
+//       stack: error.stack
+//     });
+//     throw new RpcException(error);
+//   }
+// }
 
-private async refreshArchivoCache(
-  key: string, 
-  archivosByEmpresaDto: ArchivosByEmpresaDto,
-  empresaId: string
-): Promise<void> {
-  try {
-    const { page = 1, limit = 10, categoria, provider } = archivosByEmpresaDto;
-    const payload = { 
-      paginationDto: { page, limit }, 
-      empresaId, 
-      categoria 
-    };
+// private async refreshArchivoCache(
+//   key: string, 
+//   archivosByEmpresaDto: ArchivosByEmpresaDto,
+//   empresaId: string
+// ): Promise<void> {
+//   try {
+//     const { page = 1, limit = 10, categoria, provider } = archivosByEmpresaDto;
+//     const payload = { 
+//       paginationDto: { page, limit }, 
+//       empresaId, 
+//       categoria 
+//     };
     
-    const response = await firstValueFrom(
-      this.companiesClient.send('archivo.findByEmpresa', payload)
-    );
+//     const response = await firstValueFrom(
+//       this.companiesClient.send('archivo.findByEmpresa', payload)
+//     );
 
-    if (response && response.data) {
-      // Generar URLs para los archivos
-      const archivosConUrl = response.data.map(archivo => ({
-        ...archivo,
-        url: FileUrlHelper.getFileUrl(archivo.ruta || archivo.filename, {
-          tenantId: archivo.tenantId,
-          provider
-        })
-      }));
+//     if (response && response.data) {
+//       // Generar URLs para los archivos
+//       const archivosConUrl = response.data.map(archivo => ({
+//         ...archivo,
+//         url: FileUrlHelper.getFileUrl(archivo.ruta || archivo.filename, {
+//           tenantId: archivo.tenantId,
+//           provider
+//         })
+//       }));
 
-      // Preparar respuesta
-      const formattedResponse = {
-        data: archivosConUrl,
-        metadata: response.metadata
-      };
+//       // Preparar respuesta
+//       const formattedResponse = {
+//         data: archivosConUrl,
+//         metadata: response.metadata
+//       };
 
-      // Actualizar la caché
-      await this.redisService.set(
-        key,
-        formattedResponse,
-        REDIS_GATEWAY_CONFIG.LOCAL_CACHE.TTL
-      );
-    }
-  } catch (error) {
-    this.logger.error(`Error al refrescar caché de archivos:`, error);
-    throw error;
-  }
-}
+//       // Actualizar la caché
+//       await this.redisService.set(
+//         key,
+//         formattedResponse,
+//         REDIS_GATEWAY_CONFIG.LOCAL_CACHE.TTL
+//       );
+//     }
+//   } catch (error) {
+//     this.logger.error(`Error al refrescar caché de archivos:`, error);
+//     throw error;
+//   }
+// }
 
 
 @Get('/:empresaId/storage/stats')

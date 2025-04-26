@@ -22,6 +22,10 @@ export class FileUrlHelper {
     const effectiveProvider = options?.provider || detectedProvider || storageType;
     
     switch (effectiveProvider) {
+      case 'elastika':
+        // Usamos encodeURIComponent para manejar correctamente caracteres especiales en la URL
+        return `http://161.132.48.141/files/${fullPath}`;
+
       case 'firebase':
         // Usamos encodeURIComponent para manejar correctamente caracteres especiales en la URL
         return `https://firebasestorage.googleapis.com/v0/b/${process.env.FIREBASE_STORAGE_BUCKET}/o/${encodeURIComponent(fullPath)}?alt=media`;

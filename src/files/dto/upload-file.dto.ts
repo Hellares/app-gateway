@@ -53,8 +53,8 @@ export class UploadFileDto implements FileUploadOptions {
   useAdvancedProcessing?: boolean;
 
   @IsOptional()
-  @IsEnum(['profile', 'PRODUCTO', 'banner', 'thumbnail', 'default'])
-  imagePreset?: 'profile' | 'PRODUCTO' | 'banner' | 'thumbnail' | 'default';
+  @IsEnum(['profile', 'producto', 'servicio','banner', 'thumbnail', 'default'])
+  imagePreset?: 'profile' | 'producto' | 'servicio' | 'banner' | 'thumbnail' | 'default';
 
   @IsOptional()
   @IsBoolean()

@@ -75,30 +75,77 @@ export class ArchivoService {
   }
 
   async findArchivoById(id: string) {
+   
     try {
-      return await firstValueFrom(
+      const archivo = await firstValueFrom(
         this.empresaClient.send('archivo.findById', id).pipe(
-          timeout(5000)
+          timeout(5000),
+          catchError(error => {
+            this.logger.error(`Error al buscar archivo por ID ${id}:`, error);
+            throw new RpcException(error);
+          })
         )
       );
+      
+      if (archivo) {
+        // Enriquecer con URL usando el proveedor del archivo
+        archivo.url = this.buildFileUrl(archivo.ruta, { provider: archivo.provider });
+      }
+      console.log(archivo.url);
+      return archivo;
     } catch (error) {
       this.logger.error(`Error al buscar archivo por ID ${id}:`, error);
       throw error;
     }
   }
 
-  async findArchivosByEntidad(tipoEntidad: string, entidadId: string) {
+  async findArchivosByEntidad(
+    tipoEntidad: string, 
+    entidadId: string, 
+    paginationDto: PaginationDto = { page: 1, limit: 10 },
+    empresaId?: string, 
+    categoria?: CategoriaArchivo
+  ) {
     try {
-      return await firstValueFrom(
-        this.empresaClient.send('archivo.findByEntidad', { tipoEntidad, entidadId }).pipe(
-          timeout(5000)
+      // Construir el payload para el microservicio
+      const payload = {
+        tipoEntidad,
+        entidadId,
+        paginationDto,
+        empresaId,
+        categoria
+      };
+      
+      // Llamar al microservicio
+      const result = await firstValueFrom(
+        this.empresaClient.send('archivo.findByEntidadFiltrado', payload).pipe(
+          timeout(5000),
+          catchError(error => {
+            this.logger.error(`Error al buscar archivos por entidad:`, error);
+            throw error;
+          })
         )
       );
+      
+      return result;
     } catch (error) {
-      this.logger.error(`Error al buscar archivos por entidad ${tipoEntidad}:${entidadId}:`, error);
+      this.logger.error(`Error al buscar archivos para ${tipoEntidad}:${entidadId}`, error);
       throw error;
     }
   }
+
+  // async findArchivosByEntidad(tipoEntidad: string, entidadId: string) {
+  //   try {
+  //     return await firstValueFrom(
+  //       this.empresaClient.send('archivo.findByEntidad', { tipoEntidad, entidadId }).pipe(
+  //         timeout(5000)
+  //       )
+  //     );
+  //   } catch (error) {
+  //     this.logger.error(`Error al buscar archivos por entidad ${tipoEntidad}:${entidadId}:`, error);
+  //     throw error;
+  //   }
+  // }
 
   async findArchivosByEmpresa( paginationDto: PaginationDto,empresaId: string, categoria?: CategoriaArchivo) {
     try {
@@ -129,7 +176,7 @@ export class ArchivoService {
   async deleteArchivo(id: string) {
     try {
       return await firstValueFrom(
-        this.empresaClient.send('archivo.delete', id).pipe(
+        this.empresaClient.send('archivo.deleteByFilename', id).pipe(
           timeout(5000)
         )
       );
@@ -144,12 +191,15 @@ export class ArchivoService {
     if (!path) return null;
     return path.split('/').pop();
   }
-
-  buildFileUrl(ruta: string): string {
+ 
+  buildFileUrl(ruta: string, storageOptions?: {
+    provider?: string;
+    tenantId?: string;
+  }): string {
     if (!ruta) return null;
     
-    const storageType = process.env.STORAGE_TYPE || 'firebase';;
-    
+    // Usar el proveedor proporcionado o recurrir a la variable de entorno como fallback
+    const storageType = storageOptions?.provider; //|| process.env.STORAGE_TYPE || 'firebase';
     
     switch (storageType) {
       case 'firebase':
@@ -159,7 +209,9 @@ export class ArchivoService {
       case 's3':
         return `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${ruta}`;
       case 'elastika':
-        return `${process.env.ELASTIKA_BASE_URL || 'http://161.132.48.141'}/files/${ruta}`;
+        // Si hay tenantId, lo incluimos en la URL para Elastika
+        const tenantPath = storageOptions?.tenantId ? `/${storageOptions.tenantId}` : '';
+        return `${process.env.ELASTIKA_BASE_URL}/files${tenantPath}/${ruta}`;
       default:
         return `${process.env.API_URL}/uploads/${ruta}`;
     }

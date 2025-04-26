@@ -11,6 +11,7 @@ export const REDIS_GATEWAY_CONFIG = {
     EXISTS: 'cache.exists',
     CLEAR: 'cache.clear',
     HEALTH: 'cache.health',
+    CLEAR_ENTITY: 'cache.clearByEntityType',
   },
 
   // Timeouts ajustados para RMQ

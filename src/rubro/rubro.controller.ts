@@ -76,10 +76,10 @@ export class RubroController {
       if (icono) {
         uploadedFile = await this.unifiedfilesService.uploadFile(icono, {
           provider: provider || 'firebase',
-          tenantId: tenantId || 'admin',
+          tenantId: tenantId || '44885296',
           empresaId: empresaId,
           useAdvancedProcessing: false,
-          imagePreset: 'PRODUCTO',
+          imagePreset: 'producto',
           skipMetadataRegistration: true
         });
       }

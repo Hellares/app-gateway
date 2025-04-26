@@ -1,4 +1,4 @@
-import { Controller, Get, Logger, Post, UseGuards } from '@nestjs/common';
+import { Controller, Get, Logger, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { RedisService } from './redis.service';
 import { CacheMetrics } from './interfaces/cache-metrics.interface';
 import { CACHE_KEYS } from './constants/redis-cache.keys.contants';
@@ -7,7 +7,7 @@ import { RateLimitGuard } from 'src/common/guards/rate-limit.guard';
 
 
 @Controller('redis')
-@UseGuards(RateLimitGuard)
+// @UseGuards(RateLimitGuard)
 export class RedisController {
   private readonly logger = new Logger('RedisController');
   constructor(private readonly redisService: RedisService) {}
@@ -16,17 +16,17 @@ export class RedisController {
 
   @Get('health')
 async checkHealth() {
-  this.logger.log('🔍 Verificando estado de Redis...');
+  this.logger.log('Verificando estado de Redis...');
   const health = await this.redisService.healthCheck();
   
   if (health.status === 'healthy') {
-    this.logger.log('✅ Redis está funcionando correctamente', {
+    this.logger.log('Redis esta funcionando correctamente', {
       responseTime: `${health.responseTime}ms`,
       successRate: `${health.metrics?.online.successRate}%`
     });
   } else {
     const offlineTime = health.timeOfflineFormatted || 'tiempo desconocido';
-    this.logger.warn(`⚠️ Redis no está saludable - Offline por ${offlineTime}`, {
+    this.logger.warn(`Redis no esta saludable - Offline por ${offlineTime}`, {
       failures: health.consecutiveFailures,
       nextRetry: health.nextRetryIn ? `${health.nextRetryIn}ms` : 'N/A'
     });
@@ -42,16 +42,16 @@ async checkHealth() {
     
     // Añadir alertas basadas en métricas
     if (!metrics.connectionStatus.isConnected) {
-      this.logger.warn(`⚠️ Redis offline por ${metrics.timeOffline || 'tiempo desconocido'}`);
-      this.logger.verbose(`ℹ️ Usando caché local con ${metrics.localCacheSize} entradas`);
+      this.logger.warn(`Redis offline por ${metrics.timeOffline || 'tiempo desconocido'}`);
+      this.logger.verbose(`Usando cache local con ${metrics.localCacheSize} entradas`);
     }
     
     if (metrics.online.successRate < 90) {
-      this.logger.warn(`⚠️ Tasa de éxito baja en modo online: ${metrics.online.successRate}%`);
+      this.logger.warn(`Tasa de exito baja en modo online: ${metrics.online.successRate}%`);
     }
     
     if (metrics.connectionStatus.consecutiveFailures > 0) {
-      this.logger.warn(`⚠️ Fallos consecutivos: ${metrics.connectionStatus.consecutiveFailures}`);
+      this.logger.warn(`Fallos consecutivos: ${metrics.connectionStatus.consecutiveFailures}`);
     }
 
     return {
@@ -95,9 +95,9 @@ async checkHealth() {
     const result = await this.redisService.clearAll();
     
     if (result.success) {
-      this.logger.log('✅ Caché limpiado exitosamente');
+      this.logger.log('Cach limpiado exitosamente');
     } else {
-      this.logger.error(`❌ Error al limpiar caché: ${result.error}`);
+      this.logger.error(`Error al limpiar cach: ${result.error}`);
     }
     
     return result;
@@ -127,15 +127,6 @@ async getLocalCacheContent() {
   };
 }
 
-// @Post('debug/cache/clear')
-// async clearLocalCache() {
-//   await this.redisService.clearLocalCache();
-//   return {
-//     status: 'success',
-//     message: 'Caché local limpiado',
-//     timestamp: new Date().toISOString()
-//   };
-// }
 
 @Get('debug/cache/stats')
 async getLocalCacheStats() {
@@ -146,69 +137,10 @@ async getLocalCacheStats() {
   };
 }
 
-// @Get('metrics/detailed')
-// async getDetailedMetrics() {
-//   this.logger.debug('🔍 Obteniendo métricas detalladas de Redis');
-//   const metrics = await this.redisService.getMetrics();
-//   const localCache = this.redisService.getLocalCache();
-//   const cacheDetails = this.redisService.getLocalCacheDetails();
-
-//   // Calcular métricas adicionales
-//   const now = Date.now();
-//   const entries = Array.from(localCache.entries()).map(([key, entry]) => {
-//     const age = now - entry.timestamp;
-//     const expiresIn = entry.expiresAt ? entry.expiresAt - now : undefined;
-    
-//     return {
-//       key,
-//       age: this.formatDuration(age),
-//       expiresIn: expiresIn && expiresIn > 0 ? this.formatDuration(expiresIn) : 'Expirado',
-//       size: this.formatBytes(JSON.stringify(entry.data).length),
-//       metadata: entry.metadata || {},
-//       pattern: this.getKeyPattern(key)
-//     };
-//   });
-
-//   // Logging de estado y alertas
-//   if (!metrics.connectionStatus.isConnected) {
-//     this.logger.warn('⚠️ Obteniendo métricas en modo offline');
-//   }
-
-//   if (localCache.size > (REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE * 0.9)) {
-//     this.logger.warn(`⚠️ Caché local cerca del límite: ${localCache.size}/${REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE}`);
-//   }
-
-//   return {
-//     status: 'success',
-//     timestamp: new Date().toISOString(),
-//     serviceState: metrics.connectionStatus.isConnected ? 'connected' : 'disconnected',
-//     localCache: {
-//       size: localCache.size,
-//       maxSize: REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE,
-//       usagePercentage: `${((localCache.size / REDIS_GATEWAY_CONFIG.LOCAL_CACHE.MAX_SIZE) * 100).toFixed(2)}%`,
-//       totalMemoryUsage: this.formatBytes(cacheDetails.summary.totalSize),
-//       averageEntrySize: this.formatBytes(cacheDetails.summary.avgEntrySize),
-//       patterns: cacheDetails.summary.patterns
-//     },
-//     performance: {
-//       hits: metrics.hits,
-//       misses: metrics.misses,
-//       hitRatio: `${((metrics.hits / Math.max(metrics.totalOperations, 1)) * 100).toFixed(2)}%`,
-//       averageResponseTime: `${metrics.averageResponseTime?.toFixed(2) || 0}ms`,
-//       successRate: `${metrics.successRate}%`,
-//       status: this.getHealthStatus(metrics)
-//     },
-//     entries: entries.sort((a, b) => 
-//       metrics.connectionStatus.isConnected ? -1 : 1
-//     ).slice(0, 50), // Limitar a 50 entradas para no sobrecargar la respuesta
-//     timeOffline: metrics.timeOfflineFormatted || '0s',
-//     lastUpdated: metrics.lastUpdated
-//   };
-// }
 
 @Get('metrics/detailed')
 async getDetailedMetrics() {
-  this.logger.debug('🔍 Obteniendo métricas detalladas de Redis');
+  this.logger.debug('Obteniendo metricas detalladas de Redis');
   const metrics = await this.redisService.getMetrics();
   const localCache = this.redisService.getLocalCache();
   const cacheDetails = this.redisService.getLocalCacheDetails();
@@ -231,7 +163,7 @@ async getDetailedMetrics() {
 
   // Logging de estado y alertas
   if (!metrics.connectionStatus.isConnected) {
-    this.logger.warn('⚠️ Obteniendo métricas en modo offline');
+    this.logger.warn('Obteniendo metricas en modo offline');
   }
 
   const hitRatio = Number(((metrics.hits / Math.max(metrics.totalOperations, 1)) * 100).toFixed(2));
@@ -386,6 +318,7 @@ async verifyTestData() {
     }))
   };
 }
+
 
 
 }

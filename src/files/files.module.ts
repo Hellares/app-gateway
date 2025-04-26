@@ -11,12 +11,14 @@ import { RabbitMQConsumerService } from './rabbitmq-consumer.service';
 import { FileStorageService } from './file-storage.service';
 import { ProcessingManagerService } from './processing-manager.service';
 import { ImageProcessingService } from './image-processing.service';
+import { RedisModule } from 'src/redis/redis.module';
 
 
 @Module({
   imports: [
     RabbitMQModule,
-    ArchivoModule
+    ArchivoModule,
+    RedisModule,
   ],
   controllers: [
     FilesController,

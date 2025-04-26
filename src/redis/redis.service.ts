@@ -12,8 +12,9 @@ import {
 } from './config/redis.constants';
 import { LocalCacheEntry } from './interfaces/local-cache.interface';
 import { HealthCheckResponse } from './interfaces/health-check.interface';
-import { CACHE_KEYS } from './constants/redis-cache.keys.contants';
+import { CACHE_KEYS, CACHE_PATTERNS, REDIS_ENTITIES } from './constants/redis-cache.keys.contants';
 import { envs } from 'src/config';
+import { buildRedisPattern, ParsedRedisKey, parseRedisKey } from './utils/redis-key-parser';
 
 
 
@@ -410,42 +411,6 @@ private updateMetricsForCurrentState(
   metrics.successRate = this.calculateSuccessRate(metrics);
 }
 
-// Actualización de métricas globales
-// private updateGlobalMetrics(currentMetrics: ServiceMetrics, responseTime: number) {
-//   Combinar métricas online y offline
-//   Object.assign(this.metrics, {
-//     hits: this.onlineMetrics.hits + this.offlineMetrics.hits,
-//     misses: this.onlineMetrics.misses + this.offlineMetrics.misses,
-//     totalOperations: this.onlineMetrics.totalOperations + this.offlineMetrics.totalOperations,
-//     failedOperations: this.onlineMetrics.failedOperations + this.offlineMetrics.failedOperations,
-//     online: this.onlineMetrics,
-//     offline: this.offlineMetrics,
-    
-//     Validaciones en el cálculo de promedios
-//     averageResponseTime: Number(
-//       this.calculateMovingAverage(
-//         this.metrics.averageResponseTime, 
-//         responseTime, 
-//         this.metrics.totalOperations || 1
-//       ).toFixed(2)
-//     ),
-    
-//     lastResponseTime: responseTime,
-//     successRate: this.calculateTotalSuccessRate(),
-//     localCacheSize: this.localCache.size,
-//     lastUpdated: new Date(),
-    
-//     Estado de conexión
-//     connectionStatus: {
-//       isConnected: this.serviceState === REDIS_SERVICE_STATE.CONNECTED,
-//       consecutiveFailures: this.getDisplayedFailures(),
-//       lastConnectionAttempt: new Date()
-//     }
-//   });
-
-//   Logging de depuración para rastrear métricas
-//   this.logger.debug(`📊 Métricas actualizadas: ${JSON.stringify(this.metrics, null, 2)}`);
-// }
 private updateGlobalMetrics(currentMetrics: ServiceMetrics, responseTime: number) {
   // Combinar métricas online y offline
   Object.assign(this.metrics, {
@@ -554,22 +519,22 @@ private calculateMovingAverage(
 
 
 
-private calculateTotalSuccessRate(): number {
-  const onlineOps = this.onlineMetrics.totalOperations || 0;
-  const offlineOps = this.offlineMetrics.totalOperations || 0;
-  const totalOps = onlineOps + offlineOps;
-  
-  if (totalOps <= 0) {
-    return 100;
+  private calculateTotalSuccessRate(): number {
+    const onlineOps = this.onlineMetrics.totalOperations || 0;
+    const offlineOps = this.offlineMetrics.totalOperations || 0;
+    const totalOps = onlineOps + offlineOps;
+    
+    if (totalOps <= 0) {
+      return 100;
+    }
+
+    const onlineFails = this.onlineMetrics.failedOperations || 0;
+    const offlineFails = this.offlineMetrics.failedOperations || 0;
+    const totalFails = onlineFails + offlineFails;
+
+    const successRate = ((totalOps - totalFails) / totalOps) * 100;
+    return Number(Math.min(100, Math.max(0, successRate)).toFixed(2));
   }
-
-  const onlineFails = this.onlineMetrics.failedOperations || 0;
-  const offlineFails = this.offlineMetrics.failedOperations || 0;
-  const totalFails = onlineFails + offlineFails;
-
-  const successRate = ((totalOps - totalFails) / totalOps) * 100;
-  return Number(Math.min(100, Math.max(0, successRate)).toFixed(2));
-}
 
   async get<T>(key: string): Promise<CacheResponse<T>> {
     const startTime = Date.now();
@@ -819,6 +784,7 @@ private calculateTotalSuccessRate(): number {
     }
   }
 
+  
   async clearAll(): Promise<CacheResponse> {
     const startTime = Date.now();
     try {
@@ -1045,6 +1011,101 @@ private calculateTotalSuccessRate(): number {
     return patterns;
   }
 
+  /*
+  * Método para limpiar caché por patrón localmente y en Redis
+  * Se utiliza para limpiar caché de rubros, planes y archivos
+  * Limpia todos los patrones que coincidan con el patrón dado de todas las entidades que existen en la caché local 
+  */
+
+  async clearByPattern(pattern: string): Promise<CacheResponse> {
+    const startTime = Date.now();
+    try {
+      this.logger.debug(`Limpiando cache por patron: ${pattern}`);
+    
+      // Determinar qué módulo estamos limpiando basado en el patrón
+      const modulePrefix = pattern.split('*')[0].split(':')[0]; // Extrae "archivo", "rubro", etc.
+      
+      // Eliminar de la caché local solo las entradas relacionadas con ese módulo
+      let keysDeleted = 0;
+      for (const key of Array.from(this.localCache.keys())) {
+        if (key.startsWith(modulePrefix)) {
+          this.localCache.delete(key);
+          keysDeleted++;
+        }
+      }
+    
+    this.logger.debug(`Limpiadas ${keysDeleted} claves locales del modulo: ${modulePrefix}`);
+
+      // Si Redis está desconectado, solo reportamos la limpieza local
+      if (this.serviceState !== REDIS_SERVICE_STATE.CONNECTED) {
+        this.logger.debug(`Limpiadas ${keysDeleted} claves locales con patron: ${pattern}`);
+        return {
+          success: true,
+          source: 'local',
+          details: {
+            responseTime: Date.now() - startTime,
+            lastCheck: new Date().toISOString(),
+            keysDeleted,
+            partialClear: true
+          }
+        };
+      }
+      
+      // Si Redis está conectado, también limpiar allí
+      const response = await firstValueFrom<CacheResponse>(
+        this.cacheClient.send(
+          { cmd: 'cache.clearPattern' }, 
+          pattern
+        ).pipe(
+          timeout(this.timeoutMs)
+        )
+      );
+      
+      this.updateMetrics('hit', Date.now() - startTime);
+      
+      this.logger.debug(`Limpieza por patron completada: ${pattern} (${keysDeleted} claves locales, ${response.details?.keysDeleted || 0} claves en Redis)`);
+      
+      return {
+        ...response,
+        details: {
+          ...response.details,
+          // localKeysDeleted: keysDeleted,
+          // totalKeysDeleted: (response.details?.keysDeleted || 0) + keysDeleted,
+          responseTime: Date.now() - startTime,
+          lastCheck: new Date().toISOString()
+        }
+      };
+    } catch (error) {
+      this.logger.error(`Error limpiando caché por patrón: ${pattern}`, error);
+      return this.handleError(error, startTime);
+    }
+  }
+
+
+
+  async clearRubroCache(): Promise<CacheResponse> {
+    return this.clearByPattern(CACHE_KEYS.RUBRO.PATTERN);
+  }
+  
+  async clearPlanCache(): Promise<CacheResponse> {
+    return this.clearByPattern(CACHE_KEYS.PLAN.PATTERN);
+  }
+  
+  async clearArchivoCache(): Promise<CacheResponse> {
+    return this.clearByPattern(CACHE_KEYS.ARCHIVO.PATTERN_ACTIVE);
+  }
+
+    
+  // Método selectivo para limpiar cache de archivos de una empresa específica
+  async clearArchivoEmpresaCache(empresaId: string): Promise<CacheResponse> {
+    return this.clearByPattern(CACHE_KEYS.ARCHIVO.EMPRESA_PATTERN(empresaId));
+  }
+
+  /*
+  * Aqui termina la parte de limpieza de caché por patrón
+  * Se utiliza para limpiar caché de rubros, planes y archivos
+  */
+
   
   
   async getDetailedMetrics(): Promise<DetailedCacheMetrics> {
@@ -1119,15 +1180,13 @@ private calculateTotalSuccessRate(): number {
   }
 
   // Método auxiliar para formatear bytes
-private formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
-}
-
-   
+  private formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+  }
 
   private getHitsForKey(key: string): number {
     const metrics = this.metrics.online?.hits || 0;
@@ -1148,6 +1207,773 @@ private formatBytes(bytes: number): string {
   private getTotalHits(): number {
     return this.metrics.hits || 0;
   }
+
+
+
+  //**************************************** */
+
+
+
+
+  /**
+ * Método para limpiar el caché basado en componentes específicos de la clave
+ * 
+ * @param components Los componentes para construir el patrón de limpieza
+ */
+async clearByKeyComponents(components: Partial<ParsedRedisKey>): Promise<CacheResponse<void>> {
+  const startTime = Date.now();
+  try {
+    const pattern = buildRedisPattern(components);
+    
+    this.logger.debug(`Limpiando cache por componentes específicos - Patrón: ${pattern}`);
+    
+    // Limpiar cache local primero
+    let localKeysDeleted = 0;
+    const regexStr = '^' + pattern
+      .replace(/\*/g, '.*')
+      .replace(/\?/g, '.')
+      .replace(/\[/g, '\\[')
+      .replace(/\]/g, '\\]')
+      .replace(/\./g, '\\.');
+    
+    try {
+      const regexPattern = new RegExp(regexStr);
+      
+      // Iterar sobre las claves de caché local y eliminar las que coincidan
+      for (const key of Array.from(this.localCache.keys())) {
+        if (regexPattern.test(key)) {
+          this.localCache.delete(key);
+          localKeysDeleted++;
+        }
+      }
+    } catch (regexError) {
+      this.logger.warn(`Error al crear regex para limpieza local: ${regexError.message}`);
+    }
+    
+    // Si Redis está desconectado, solo reportamos la limpieza local
+    if (this.serviceState !== REDIS_SERVICE_STATE.CONNECTED) {
+      this.logger.debug(`Limpiadas ${localKeysDeleted} claves locales con patrón: ${pattern} (Redis offline)`);
+      return {
+        success: true,
+        source: 'local',
+        details: {
+          responseTime: Date.now() - startTime,
+          lastCheck: new Date().toISOString(),
+          localKeysDeleted: localKeysDeleted,
+          partialClear: true
+        }
+      };
+    }
+    
+    // Si Redis está conectado, también limpiar allí
+    const redisResponse  = await firstValueFrom<CacheResponse>(
+      this.cacheClient.send(
+        { cmd: 'cache.clearByKeyComponents' }, 
+        components
+      ).pipe(
+        timeout(this.timeoutMs)
+      )
+    );
+    
+    this.updateMetrics('hit', Date.now() - startTime);
+    
+    this.logger.debug(`Limpieza por componentes completada. Patrón: ${pattern} (${localKeysDeleted} claves locales, ${redisResponse.details?.keysDeleted || 0} claves en Redis)`);
+
+    const response: CacheResponse<void> = {
+      success: redisResponse.success,
+      source: redisResponse.source,
+      details: {
+        ...(redisResponse.details || {}),
+        localKeysDeleted,
+        responseTime: Date.now() - startTime,
+        lastCheck: new Date().toISOString()
+      }
+    };
+    
+    // Si hay error en la respuesta original, lo preservamos
+    if (redisResponse.error) {
+      response.error = redisResponse.error;
+    }   
+    
+    
+  } catch (error) {
+    this.logger.error(`Error limpiando caché por componentes: ${error.message}`, error);
+    return this.handleError(error, startTime);
+  }
+}
+
+/**
+ * Método para limpiar el caché basado en una clave similar
+ * 
+ * @param sampleKey Clave de ejemplo para analizar
+ * @param filterComponents Componentes a utilizar para el filtrado
+ */
+async clearBySimilarKeys(sampleKey: string, filterComponents: Array<keyof ParsedRedisKey>): Promise<CacheResponse<void>> {
+  const startTime = Date.now();
+  try {
+    this.logger.debug(`Limpiando cache por clave similar: ${sampleKey}`);
+    
+    const parsedKey = parseRedisKey(sampleKey);
+    const filterPattern: Partial<ParsedRedisKey> = {};
+    
+    // Solo incluir los componentes especificados en filterComponents
+    for (const component of filterComponents) {
+      if (component in parsedKey) {
+        // Método seguro para asignar valores según el tipo de componente
+        switch (component) {
+          case 'entityType':
+          case 'entityId':
+          case 'subEntityType':
+          case 'subEntityId':
+          case 'operation':
+          case 'originalKey':
+            filterPattern[component] = parsedKey[component];
+            break;
+          case 'pagination':
+            if (parsedKey.pagination) {
+              filterPattern.pagination = { ...parsedKey.pagination };
+            }
+            break;
+          case 'rawSegments':
+            if (Array.isArray(parsedKey.rawSegments)) {
+              filterPattern.rawSegments = [...parsedKey.rawSegments];
+            }
+            break;
+        }
+      }
+    }
+    
+    // Si no hay componentes para filtrar, lanzar error
+    if (Object.keys(filterPattern).length === 0) {
+      throw new Error(`No se encontraron componentes válidos en la clave de ejemplo: ${sampleKey}`);
+    }
+    
+    // Si Redis está desconectado, usar el método local
+    if (this.serviceState !== REDIS_SERVICE_STATE.CONNECTED) {
+      return this.clearByKeyComponents(filterPattern);
+    }
+    
+    // Si Redis está conectado, llamar al microservicio
+    const redisResponse  = await firstValueFrom<CacheResponse>(
+      this.cacheClient.send(
+        { cmd: 'cache.clearBySimilarKeys' }, 
+        { sampleKey, filterComponents }
+      ).pipe(
+        timeout(this.timeoutMs)
+      )
+    );
+    
+    this.updateMetrics('hit', Date.now() - startTime);
+
+    // Construimos una respuesta de tipo correcto
+    const response: CacheResponse<void> = {
+      success: redisResponse.success,
+      source: redisResponse.source,
+      details: {
+        ...(redisResponse.details || {}),
+        // localKeysDeleted,
+        responseTime: Date.now() - startTime,
+        lastCheck: new Date().toISOString()
+      }
+    };
+    
+    // Si hay error en la respuesta original, lo preservamos
+    if (redisResponse.error) {
+      response.error = redisResponse.error;
+    }
+    
+    return response;
+    
+    
+  } catch (error) {
+    this.logger.error(`Error limpiando caché por clave similar: ${error.message}`, error);
+    return this.handleError(error, startTime);
+  }
+}
+
+/**
+ * Método para limpiar el caché por entidad principal
+ * 
+ * @param entityType Tipo de entidad (ej: "SERVICIO")
+ * @param entityId ID de la entidad (ej: "123")
+ */
+async clearByMainEntity(entityType: string, entityId: string): Promise<CacheResponse<void>> {
+  const startTime = Date.now();
+  try {
+    this.logger.debug(`Limpiando cache por entidad principal: ${entityType}${entityId}`);
+    
+    // Construir el patrón para la limpieza
+    const pattern = CACHE_PATTERNS.forEntityType(entityType, entityId);
+    
+    // Limpiar cache local primero
+    let localKeysDeleted = 0;
+    const regexStr = '^' + pattern
+      .replace(/\*/g, '.*')
+      .replace(/\?/g, '.')
+      .replace(/\[/g, '\\[')
+      .replace(/\]/g, '\\]')
+      .replace(/\./g, '\\.');
+    
+    try {
+      const regexPattern = new RegExp(regexStr);
+      
+      // Iterar sobre las claves de caché local y eliminar las que coincidan
+      for (const key of Array.from(this.localCache.keys())) {
+        if (regexPattern.test(key)) {
+          this.localCache.delete(key);
+          localKeysDeleted++;
+        }
+      }
+    } catch (regexError) {
+      this.logger.warn(`Error al crear regex para limpieza local: ${regexError.message}`);
+    }
+    
+    // Si Redis está desconectado, solo reportamos la limpieza local
+    if (this.serviceState !== REDIS_SERVICE_STATE.CONNECTED) {
+      this.logger.debug(`Limpiadas ${localKeysDeleted} claves locales para entidad: ${entityType}${entityId} (Redis offline)`);
+      return {
+        success: true,
+        source: 'local',
+        details: {
+          responseTime: Date.now() - startTime,
+          lastCheck: new Date().toISOString(),
+          localKeysDeleted,
+          partialClear: true
+        }
+      };
+    }
+    
+    // Si Redis está conectado, también limpiar allí
+    const redisResponse  = await firstValueFrom<CacheResponse>(
+      this.cacheClient.send(
+        { cmd: 'cache.clearByMainEntity' }, 
+        { entityType, entityId }
+      ).pipe(
+        timeout(this.timeoutMs)
+      )
+    );
+    
+    this.updateMetrics('hit', Date.now() - startTime);
+    
+    this.logger.debug(`Limpieza por entidad principal completada: ${entityType}${entityId} (${localKeysDeleted} claves locales, ${redisResponse.details?.keysDeleted || 0} claves en Redis)`);
+    
+    // Construir una respuesta del tipo correcto
+const response: CacheResponse<void> = {
+  success: redisResponse.success,
+  source: redisResponse.source,
+  details: {
+    ...(redisResponse.details || {}),
+    localKeysDeleted,
+    responseTime: Date.now() - startTime,
+    lastCheck: new Date().toISOString()
+  }
+};
+
+// Si hay error en la respuesta original, lo preservamos
+if (redisResponse.error) {
+  response.error = redisResponse.error;
+}
+
+return response;
+  } catch (error) {
+    this.logger.error(`Error limpiando caché por entidad principal: ${error.message}`, error);
+    return this.handleError(error, startTime);
+  }
+}
+
+/**
+ * Método para limpiar el caché por par de entidades
+ * 
+ * @param entityType Tipo de entidad principal (ej: "SERVICIO")
+ * @param entityId ID de la entidad principal (ej: "123")
+ * @param subEntityType Tipo de subentidad (ej: "SERV")
+ * @param subEntityId ID de la subentidad (ej: "456")
+ */
+async clearByEntityPair(
+  entityType: string, 
+  entityId: string, 
+  subEntityType: string, 
+  subEntityId: string
+): Promise<CacheResponse<void>> {
+  const startTime = Date.now();
+  try {
+    this.logger.debug(`Limpiando cache por par de entidades: ${entityType}${entityId}:${subEntityType}${subEntityId}`);
+    
+    // Construir el patrón para la limpieza
+    const pattern = CACHE_PATTERNS.forEntityPair(entityType, entityId, subEntityType, subEntityId);
+    
+    // Limpiar cache local primero
+    let localKeysDeleted = 0;
+    const regexStr = '^' + pattern
+      .replace(/\*/g, '.*')
+      .replace(/\?/g, '.')
+      .replace(/\[/g, '\\[')
+      .replace(/\]/g, '\\]')
+      .replace(/\./g, '\\.');
+    
+    try {
+      const regexPattern = new RegExp(regexStr);
+      
+      // Iterar sobre las claves de caché local y eliminar las que coincidan
+      for (const key of Array.from(this.localCache.keys())) {
+        if (regexPattern.test(key)) {
+          this.localCache.delete(key);
+          localKeysDeleted++;
+        }
+      }
+    } catch (regexError) {
+      this.logger.warn(`Error al crear regex para limpieza local: ${regexError.message}`);
+    }
+    
+    // Si Redis está desconectado, solo reportamos la limpieza local
+    if (this.serviceState !== REDIS_SERVICE_STATE.CONNECTED) {
+      this.logger.debug(`Limpiadas ${localKeysDeleted} claves locales para par de entidades: ${entityType}${entityId}:${subEntityType}${subEntityId} (Redis offline)`);
+      return {
+        success: true,
+        source: 'local',
+        details: {
+          responseTime: Date.now() - startTime,
+          lastCheck: new Date().toISOString(),
+          localKeysDeleted,
+          partialClear: true
+        }
+      };
+    }
+    
+    // Si Redis está conectado, también limpiar allí
+    const redisResponse = await firstValueFrom<CacheResponse>(
+      this.cacheClient.send(
+        { cmd: 'cache.clearByEntityPair' }, 
+        { entityType, entityId, subEntityType, subEntityId }
+      ).pipe(
+        timeout(this.timeoutMs)
+      )
+    );
+    
+    this.updateMetrics('hit', Date.now() - startTime);
+    
+    this.logger.debug(`Limpieza por par de entidades completada: ${entityType}${entityId}:${subEntityType}${subEntityId} (${localKeysDeleted} claves locales, ${redisResponse.details?.keysDeleted || 0} claves en Redis)`);
+    
+    // Construir una respuesta del tipo correcto
+const response: CacheResponse<void> = {
+  success: redisResponse.success,
+  source: redisResponse.source,
+  details: {
+    ...(redisResponse.details || {}),
+    localKeysDeleted,
+    responseTime: Date.now() - startTime,
+    lastCheck: new Date().toISOString()
+  }
+};
+ 
+// Si hay error en la respuesta original, lo preservamos
+if (redisResponse.error) {
+  response.error = redisResponse.error;
+}
+
+return response;
+  } catch (error) {
+    this.logger.error(`Error limpiando caché por par de entidades: ${error.message}`, error);
+    return this.handleError(error, startTime);
+  }
+}
+
+/**
+ * Método para limpiar el caché por segmentos de clave
+ * 
+ * @param segments Segmentos que componen la clave
+ */
+async clearByKeySegments(segments: string[]): Promise<CacheResponse<void>> {
+  const startTime = Date.now();
+  try {
+    const pattern = CACHE_PATTERNS.forSegments(segments);
+    this.logger.debug(`Limpiando cache por segmentos: ${pattern}`);
+    
+    // Limpiar cache local primero
+    let localKeysDeleted = 0;
+    const regexStr = '^' + pattern
+      .replace(/\*/g, '.*')
+      .replace(/\?/g, '.')
+      .replace(/\[/g, '\\[')
+      .replace(/\]/g, '\\]')
+      .replace(/\./g, '\\.');
+    
+    try {
+      const regexPattern = new RegExp(regexStr);
+      
+      // Iterar sobre las claves de caché local y eliminar las que coincidan
+      for (const key of Array.from(this.localCache.keys())) {
+        if (regexPattern.test(key)) {
+          this.localCache.delete(key);
+          localKeysDeleted++;
+        }
+      }
+    } catch (regexError) {
+      this.logger.warn(`Error al crear regex para limpieza local: ${regexError.message}`);
+    }
+    
+    // Si Redis está desconectado, solo reportamos la limpieza local
+    if (this.serviceState !== REDIS_SERVICE_STATE.CONNECTED) {
+      this.logger.debug(`Limpiadas ${localKeysDeleted} claves locales con segmentos: ${segments.join(':')} (Redis offline)`);
+      return {
+        success: true,
+        source: 'local',
+        details: {
+          responseTime: Date.now() - startTime,
+          lastCheck: new Date().toISOString(),
+          localKeysDeleted,
+          partialClear: true
+        }
+      };
+    }
+    
+    // Si Redis está conectado, también limpiar allí
+    const redisResponse  = await firstValueFrom<CacheResponse>(
+      this.cacheClient.send(
+        { cmd: 'cache.clearByKeySegments' }, 
+        segments
+      ).pipe(
+        timeout(this.timeoutMs)
+      )
+    );
+    
+    this.updateMetrics('hit', Date.now() - startTime);
+    
+    this.logger.debug(`Limpieza por segmentos completada: ${segments.join(':')} (${localKeysDeleted} claves locales, ${redisResponse .details?.keysDeleted || 0} claves en Redis)`);
+    
+    // Construir una respuesta del tipo correcto
+const response: CacheResponse<void> = {
+  success: redisResponse.success,
+  source: redisResponse.source,
+  details: {
+    ...(redisResponse.details || {}),
+    localKeysDeleted,
+    responseTime: Date.now() - startTime,
+    lastCheck: new Date().toISOString()
+  }
+};
+
+// Si hay error en la respuesta original, lo preservamos
+if (redisResponse.error) {
+  response.error = redisResponse.error;
+}
+
+return response;
+  } catch (error) {
+    this.logger.error(`Error limpiando caché por segmentos: ${error.message}`, error);
+    return this.handleError(error, startTime);
+  }
+}
+
+/**
+ * Método específico para limpiar caché de servicios
+ * @param servicioId ID del servicio
+ */
+async clearServicioCache(servicioId: string): Promise<CacheResponse<void>> {
+  return this.clearByMainEntity(REDIS_ENTITIES.SERVICIO, servicioId);
+}
+
+/**
+ * Método específico para limpiar caché de un SERV específico
+ * @param servId ID del SERV
+ */
+async clearServCache(servId: string): Promise<CacheResponse<void>> {
+  const startTime = Date.now();
+  try {
+    const pattern = CACHE_KEYS.SERVICIO.SERV_PATTERN(servId);
+    this.logger.debug(`Limpiando cache por SERV: ${servId}`);
+    
+    // Limpiar cache local primero
+    let localKeysDeleted = 0;
+    const regexStr = '^' + pattern
+      .replace(/\*/g, '.*')
+      .replace(/\?/g, '.')
+      .replace(/\[/g, '\\[')
+      .replace(/\]/g, '\\]')
+      .replace(/\./g, '\\.');
+    
+    try {
+      const regexPattern = new RegExp(regexStr);
+      
+      for (const key of Array.from(this.localCache.keys())) {
+        if (regexPattern.test(key)) {
+          this.localCache.delete(key);
+          localKeysDeleted++;
+        }
+      }
+    } catch (regexError) {
+      this.logger.warn(`Error al crear regex para limpieza local: ${regexError.message}`);
+    }
+    
+    // Si Redis está desconectado, solo reportamos la limpieza local
+    if (this.serviceState !== REDIS_SERVICE_STATE.CONNECTED) {
+      this.logger.debug(`Limpiadas ${localKeysDeleted} claves locales para SERV: ${servId} (Redis offline)`);
+      return {
+        success: true,
+        source: 'local',
+        details: {
+          responseTime: Date.now() - startTime,
+          lastCheck: new Date().toISOString(),
+          localKeysDeleted,
+          partialClear: true
+        }
+      };
+    }
+    
+    // Si Redis está conectado, también limpiar allí
+    const redisResponse  = await firstValueFrom<CacheResponse>(
+      this.cacheClient.send(
+        { cmd: 'cache.clearByPattern' }, 
+        pattern
+      ).pipe(
+        timeout(this.timeoutMs)
+      )
+    );
+    
+    this.updateMetrics('hit', Date.now() - startTime);
+    
+    this.logger.debug(`Limpieza por SERV completada: ${servId} (${localKeysDeleted} claves locales, ${redisResponse.details?.keysDeleted || 0} claves en Redis)`);
+    
+    // Construir una respuesta del tipo correcto
+const response: CacheResponse<void> = {
+  success: redisResponse.success,
+  source: redisResponse.source,
+  details: {
+    ...(redisResponse.details || {}),
+    localKeysDeleted,
+    responseTime: Date.now() - startTime,
+    lastCheck: new Date().toISOString()
+  }
+};
+
+// Si hay error en la respuesta original, lo preservamos
+if (redisResponse.error) {
+  response.error = redisResponse.error;
+}
+
+return response;
+  } catch (error) {
+    this.logger.error(`Error limpiando caché por SERV: ${error.message}`, error);
+    return this.handleError(error, startTime);
+  }
+}
+
+/**
+ * Método específico para limpiar caché de un servicio y SERV específicos
+ * @param servicioId ID del servicio
+ * @param servId ID del SERV
+ */
+async clearServicioPorServCache(servicioId: string, servId: string): Promise<CacheResponse<void>> {
+  return this.clearByEntityPair(
+    REDIS_ENTITIES.SERVICIO, 
+    servicioId, 
+    REDIS_ENTITIES.SERV, 
+    servId
+  );
+}
+
+/**
+ * Método para limpiar caché por una clave ejemplo
+ * @param sampleKey Clave de ejemplo a usar como base para la limpieza
+ */
+async clearBySampleKey(sampleKey: string): Promise<CacheResponse<void>> {
+  // Por defecto limpiamos basándonos en entityType y entityId
+  return this.clearBySimilarKeys(sampleKey, ['entityType', 'entityId']);
+}
+
+/**
+ * Método específico para limpiar caché de una operación específica
+ * @param servicioId ID del servicio
+ * @param servId ID del SERV
+ * @param operation Operación (ej: "all")
+ */
+async clearOperationCache(servicioId: string, servId: string, operation: string): Promise<CacheResponse<void>> {
+  const segments = [
+    `${REDIS_ENTITIES.SERVICIO}${servicioId}`,
+    `${REDIS_ENTITIES.SERV}${servId}`,
+    operation
+  ];
+  
+  return this.clearByKeySegments(segments);
+}
+
+/**
+ * Método específico para limpiar caché con paginación
+ * @param servicioId ID del servicio
+ * @param servId ID del SERV
+ * @param page Número de página
+ * @param limit Límite de resultados
+ */
+async clearPaginatedCache(servicioId: string, servId: string, page: number, limit: number): Promise<CacheResponse<void>> {
+  const startTime = Date.now();
+  try {
+    // Construir el patrón de clave basado en la paginación
+    const pattern = CACHE_KEYS.SERVICIO.PAGINATED(servicioId, servId, page, limit);
+    this.logger.debug(`Limpiando cache paginado: ${pattern}`);
+    
+    // Limpiar cache local primero
+    const key = pattern; // En este caso, sabemos la clave exacta
+    const deleted = this.localCache.delete(key);
+    const localKeysDeleted = deleted ? 1 : 0;
+    
+    // Si Redis está desconectado, solo reportamos la limpieza local
+    if (this.serviceState !== REDIS_SERVICE_STATE.CONNECTED) {
+      this.logger.debug(`Limpiada ${localKeysDeleted} clave local paginada (Redis offline)`);
+      return {
+        success: true,
+        source: 'local',
+        details: {
+          responseTime: Date.now() - startTime,
+          lastCheck: new Date().toISOString(),
+          localKeysDeleted,
+          partialClear: true
+        }
+      };
+    }
+    
+    // Si Redis está conectado, también limpiar allí
+    const redisResponse  = await firstValueFrom<CacheResponse>(
+      this.cacheClient.send(
+        { cmd: 'cache.delete' }, 
+        key
+      ).pipe(
+        timeout(this.timeoutMs)
+      )
+    );
+    
+    this.updateMetrics('hit', Date.now() - startTime);
+    
+    this.logger.debug(`Limpieza de caché paginado completada: ${key}`);
+    
+    // Construir una respuesta del tipo correcto
+const response: CacheResponse<void> = {
+  success: redisResponse.success,
+  source: redisResponse.source,
+  details: {
+    ...(redisResponse.details || {}),
+    localKeysDeleted,
+    responseTime: Date.now() - startTime,
+    lastCheck: new Date().toISOString()
+  }
+};
+
+// Si hay error en la respuesta original, lo preservamos
+if (redisResponse.error) {
+  response.error = redisResponse.error;
+}
+
+return response;
+  } catch (error) {
+    this.logger.error(`Error limpiando caché paginado: ${error.message}`, error);
+    return this.handleError(error, startTime);
+  }
+}
+
+
+
+
+/**
+ * Método flexible para limpiar el caché basado en entidades completas
+ * Acepta la entidad completa (ej: "SERVICIO123") en lugar de separar tipo e ID
+ * 
+ * @param mainEntity Entidad principal completa (ej: "SERVICIO123")
+ * @param subEntity Subentidad completa opcional (ej: "SERV456")
+ */
+async clearByEntities(mainEntity: string, subEntity?: string): Promise<CacheResponse<void>> {
+  const startTime = Date.now();
+  try {
+    let pattern: string;
+    
+    if (subEntity) {
+      // Si tenemos ambas entidades, construimos un patrón para el par
+      pattern = `${mainEntity}:${subEntity}:*`;
+      this.logger.debug(`Limpiando cache por par de entidades completas: ${mainEntity}:${subEntity}`);
+    } else {
+      // Si solo tenemos la entidad principal
+      pattern = `${mainEntity}:*`;
+      this.logger.debug(`Limpiando cache por entidad principal completa: ${mainEntity}`);
+    }
+    
+    // Limpiar cache local primero
+    let localKeysDeleted = 0;
+    const regexStr = '^' + pattern
+      .replace(/\*/g, '.*')
+      .replace(/\?/g, '.')
+      .replace(/\[/g, '\\[')
+      .replace(/\]/g, '\\]')
+      .replace(/\./g, '\\.');
+    
+    try {
+      const regexPattern = new RegExp(regexStr);
+      
+      // Iterar sobre las claves de caché local y eliminar las que coincidan
+      for (const key of Array.from(this.localCache.keys())) {
+        if (regexPattern.test(key)) {
+          this.localCache.delete(key);
+          localKeysDeleted++;
+        }
+      }
+    } catch (regexError) {
+      this.logger.warn(`Error al crear regex para limpieza local: ${regexError.message}`);
+    }
+    
+    // Si Redis está desconectado, solo reportamos la limpieza local
+    if (this.serviceState !== REDIS_SERVICE_STATE.CONNECTED) {
+      const entityDesc = subEntity ? `${mainEntity}:${subEntity}` : mainEntity;
+      this.logger.debug(`Limpiadas ${localKeysDeleted} claves locales para entidad(es): ${entityDesc} (Redis offline)`);
+      
+      return {
+        success: true,
+        source: 'local',
+        details: {
+          responseTime: Date.now() - startTime,
+          lastCheck: new Date().toISOString(),
+          localKeysDeleted,
+          partialClear: true
+        }
+      };
+    }
+    
+    // Si Redis está conectado, limpiar usando el patrón
+    const response = await firstValueFrom<CacheResponse<void>>(
+      this.cacheClient.send(
+        { cmd: 'cache.clearPattern' }, 
+        pattern
+      ).pipe(
+        timeout(this.timeoutMs)
+      )
+    );
+    
+    this.updateMetrics('hit', Date.now() - startTime);
+    
+    const entityDesc = subEntity ? `${mainEntity}:${subEntity}` : mainEntity;
+    this.logger.debug(`Limpieza por entidades completada: ${entityDesc} (${localKeysDeleted} claves locales, ${response.details?.keysDeleted || 0} claves en Redis)`);
+    
+    // Construir una respuesta del tipo correcto
+    const result: CacheResponse<void> = {
+      success: response.success,
+      source: response.source,
+      details: {
+        ...(response.details || {}),
+        localKeysDeleted,
+        responseTime: Date.now() - startTime,
+        lastCheck: new Date().toISOString()
+      }
+    };
+    
+    // Si hay error en la respuesta original, lo preservamos
+    if (response.error) {
+      result.error = response.error;
+    }
+    
+    return result;
+  } catch (error) {
+    this.logger.error(`Error limpiando caché por entidades: ${error.message}`, error);
+    return this.handleError(error, startTime);
+  }
+}
+
+  
 
   
 }

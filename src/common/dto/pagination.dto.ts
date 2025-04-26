@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { IsEnum, IsOptional, IsPositive } from "class-validator";
+import { IsEnum, IsOptional, IsPositive, IsString } from "class-validator";
 import { CategoriaArchivo } from "../enums/categoria-archivo.enum";
 
 export class PaginationDto {
@@ -23,5 +23,6 @@ export class ArchivosByEmpresaDto extends PaginationDto {
   categoria?: CategoriaArchivo;
 
   @IsOptional()
-  provider?: string;
+  @IsString()
+  empresaId?: string;
 }
