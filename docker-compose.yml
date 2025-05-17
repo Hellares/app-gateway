@@ -1,0 +1,48 @@
+version: '3.8'
+
+networks:
+  microservices_network:
+    external: true
+
+services:
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: api-gateway:1.0.0
+    container_name: api-gateway
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - RABBITMQ_SERVERS=amqp://jtorres:jtorres159.@172.20.0.2:5672
+      - AUTH_SERVICE_URL=http://161.132.50.183:3007
+      - JWT_SECRET=tu-secreto-jwt-suficientemente-largo-y-seguro
+      - STORAGE_DEFAULT_PROVIDER=local
+      - STORAGE_ALLOWED_PROVIDERS=local,s3,cloudinary,firebase
+      # Agrega aquí cualquier otra variable de entorno de tu .env que necesites
+    ports:
+      - "3000:3000"  # Mapeando puerto 3000 del contenedor al 3001 del host
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - microservices_network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+    #   interval: 30s
+    #   timeout: 5s
+    #   retries: 3
+    #   start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"

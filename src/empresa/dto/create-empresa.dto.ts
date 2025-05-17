@@ -25,4 +25,28 @@ export class CreateEmpresaDto {
   @IsOptional()
   @IsString()
   portadaId?: string;
+
+  @IsOptional()
+  @IsString()
+  creadorId?: string;
+
+  @IsOptional()
+  @IsString()
+  creadorDni?: string;
+
+  @IsOptional()
+  @IsString()
+  creadorEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  creadorNombre?: string;
+
+  @IsOptional()
+  @IsString()
+  creadorApellido?: string;
+
+  @IsOptional()
+  @IsString()
+  creadorTelefono?: string;
 }

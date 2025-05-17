@@ -136,3 +136,4 @@ export class RpcCustomExceptionFilter implements ExceptionFilter {
     return throwError(() => fallbackError);
   }
 }
+

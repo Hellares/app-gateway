@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module } from '@nestjs/common';
 import { RabbitMQModule } from './transports/rabbitmq.module';
 import { EmpresaModule } from './empresa/empresa.module';
 import { RubroModule } from './rubro/rubro.module';
@@ -8,6 +8,9 @@ import { PlansModule } from './plans/plans.module';
 import { FilesModule } from './files/files.module';
 import { ArchivoModule } from './archivos/archivo.module';
 import { LoggerModule } from 'nestjs-pino';
+import { AuthModule } from './auth/auth.module';
+import { UserModule } from './user/user.module';
+
 
 @Module({
   controllers: [],
@@ -68,7 +71,10 @@ import { LoggerModule } from 'nestjs-pino';
     RedisModule,
     PlansModule,
     FilesModule,
-    ArchivoModule
+    ArchivoModule,
+    AuthModule,
+    UserModule,
   ],
 })
 export class AppModule {}
+

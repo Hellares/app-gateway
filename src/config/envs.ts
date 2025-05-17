@@ -5,6 +5,8 @@ interface EnvVars {
     PORT: number;
     NODE_ENV: 'development' | 'production' | 'test';
     RABBITMQ_SERVERS: string[];
+    AUTH_SERVICE_URL: string;
+    JWT_SECRET: string;
 }
 
 const envsSchema = joi.object({
@@ -13,6 +15,15 @@ const envsSchema = joi.object({
         .valid('development', 'production', 'test')
         .default('development'),
     RABBITMQ_SERVERS: joi.array().items(joi.string()).required(),
+    // Nuevas variables para autenticación
+    AUTH_SERVICE_URL: joi.string()
+        .uri()
+        .default('http://localhost:8080')
+        .description('URL del microservicio de autenticación'),
+    
+    JWT_SECRET: joi.string()
+        .default('tu_secreto_jwt_super_seguro')
+        .description('Clave secreta para firmar y verificar tokens JWT'),
 })
 .unknown(true);
 
@@ -34,4 +45,10 @@ export const envs = {
     isProduction: envVars.NODE_ENV === 'production',
     isDevelopment: envVars.NODE_ENV === 'development',
     rabbitmqServers: envVars.RABBITMQ_SERVERS,
+    // Nuevas variables para autenticación
+    authServiceUrl: envVars.AUTH_SERVICE_URL,
+    jwtSecret: envVars.JWT_SECRET,
+    rabbitmq: {
+        prefetchCount: 4
+    }
 }

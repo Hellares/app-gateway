@@ -191,12 +191,14 @@ private async uploadLargeFile(file: {
     }
   
     try {
+      this.logger.debug(`Verificando cuota para empresa ${empresaId}, tamaño: ${fileSize} bytes`);
       const quotaCheck = await firstValueFrom(
         this.empresaClient.send('storage.check-quota', {
           empresaId,
           fileSize,
         }).pipe(timeout(5000))
       );
+      this.logger.debug(`Resultado de verificación de cuota: ${quotaCheck.hasQuota ? 'Aprobada' : 'Rechazada'}`);
   
       if (!quotaCheck.hasQuota) {
         this.logger.warn({
