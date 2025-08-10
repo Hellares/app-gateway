@@ -40,7 +40,7 @@ RUN mkdir -p /app/logs && chmod -R 777 /app/logs
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV RABBITMQ_SERVERS=amqp://admin:admin123@rabbitmq-server:5672
-ENV AUTH_SERVICE_URL=http://161.132.50.183:3007
+ENV AUTH_SERVICE_URL=https://auth.syncronize.net.pe
 ENV JWT_SECRET=tu-secreto-jwt-suficientemente-largo-y-seguro
 
 # Healthcheck para verificar que la aplicación está funcionando

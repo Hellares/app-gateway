@@ -16,7 +16,7 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - RABBITMQ_SERVERS=amqp://admin:admin123@rabbitmq-server:5672
-      - AUTH_SERVICE_URL=http://161.132.50.183:3007
+      - AUTH_SERVICE_URL=https://auth.syncronize.net.pe
       - JWT_SECRET=tu-secreto-jwt-suficientemente-largo-y-seguro
       - STORAGE_DEFAULT_PROVIDER=local
       - STORAGE_ALLOWED_PROVIDERS=local,s3,cloudinary,firebase
