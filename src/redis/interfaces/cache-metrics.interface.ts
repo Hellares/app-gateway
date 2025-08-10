@@ -29,6 +29,7 @@ export interface CacheMetrics {
     isConnected: boolean;
     consecutiveFailures: number;
     lastConnectionAttempt: Date;
+
   };
   
 }

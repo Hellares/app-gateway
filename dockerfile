@@ -39,7 +39,7 @@ RUN mkdir -p /app/logs && chmod -R 777 /app/logs
 # Variables de entorno por defecto (serán sobrescritas por el docker-compose)
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV RABBITMQ_SERVERS=amqp://jtorres:jtorres159.@172.20.0.2:5672
+ENV RABBITMQ_SERVERS=amqp://admin:admin123@rabbitmq-server:5672
 ENV AUTH_SERVICE_URL=http://161.132.50.183:3007
 ENV JWT_SECRET=tu-secreto-jwt-suficientemente-largo-y-seguro
 

@@ -293,7 +293,7 @@ async registerClientForEmpresa(
     this.logger.debug(`Registrando nuevo cliente para empresa ${empresaId}`);
     
     // 1. Primero intentar encontrar si el usuario ya existe
-    const searchUrl = `${this.authServiceUrl}/api/auth/users/find?identifier=${encodeURIComponent(createClientDto.dni || createClientDto.email || createClientDto.phone)}`;
+    const searchUrl = `${this.authServiceUrl}/api/auth/users/find?identifier=${encodeURIComponent(createClientDto.dni || createClientDto.email || createClientDto.telefono)}`;
     
     let userId = null;
     try {
@@ -320,9 +320,15 @@ async registerClientForEmpresa(
           dni: createClientDto.dni,
           email: createClientDto.email,
           password: this.generateTemporaryPassword(), // Función para generar contraseña aleatoria
-          firstName: createClientDto.firstName,
-          lastName: createClientDto.lastName,
-          phone: createClientDto.phone
+          nombres: createClientDto.nombres,
+          apellidoPaterno: createClientDto.apellidoPaterno,
+          apellidoMaterno: createClientDto.apellidoMaterno,
+          nombresCompletos: createClientDto.nombresCompletos,
+          telefono: createClientDto.telefono,
+          departamento: createClientDto.departamento,
+          provincia: createClientDto.provincia,
+          distrito: createClientDto.distrito,
+          direccionCompleta: createClientDto.direccionCompleta,
         },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -388,7 +394,7 @@ async listUsersForEmpresa(
         authUrl += `?empresaId=${empresaId}`;
       }
       
-      ;
+      
       
       const rolesResponse = await axios.get(authUrl, {
         headers: { Authorization: `Bearer ${token}` }
@@ -397,6 +403,7 @@ async listUsersForEmpresa(
             
     // Solo administradores o usuarios con permisos específicos pueden ver usuarios
     const roles = rolesResponse.data.data;
+    
     
     const hasPermission = roles.some(role => 
       ['EMPRESA_ADMIN', 'ADMIN_USERS', 'VIEW_USERS', 'SUPER_ADMIN'].includes(role.name)
@@ -425,7 +432,7 @@ async listUsersForEmpresa(
       headers: { Authorization: `Bearer ${token}` }
     });
   
-    
+   
     return {
       success: true,
       data: usersResponse.data.data,

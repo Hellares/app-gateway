@@ -16,14 +16,38 @@ export class RegisterUserDto {
 
   @IsString()
   @IsNotEmpty()
-  firstName: string;
+  nombres: string;
 
   @IsString()
   @IsNotEmpty()
-  lastName: string;
+  apellidoPaterno: string;
 
   @IsString()
-  @IsOptional()
-  phone?: string;
+  @IsNotEmpty()
+  apellidoMaterno: string;
+
+  @IsString()
+  @IsNotEmpty()
+  nombresCompletos: string;
+
+  @IsString()
+  @IsNotEmpty()
+  telefono: string;
+
+  @IsString()
+  @IsNotEmpty()
+  departamento: string;
+
+  @IsString()
+  @IsNotEmpty()
+  provincia: string;
+
+  @IsString()
+  @IsNotEmpty()
+  distrito: string;
+
+  @IsString()
+  @IsNotEmpty()
+  direccionCompleta: string;
 }
 

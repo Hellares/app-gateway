@@ -15,7 +15,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - RABBITMQ_SERVERS=amqp://jtorres:jtorres159.@172.20.0.2:5672
+      - RABBITMQ_SERVERS=amqp://admin:admin123@rabbitmq-server:5672
       - AUTH_SERVICE_URL=http://161.132.50.183:3007
       - JWT_SECRET=tu-secreto-jwt-suficientemente-largo-y-seguro
       - STORAGE_DEFAULT_PROVIDER=local

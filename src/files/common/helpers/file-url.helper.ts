@@ -24,7 +24,8 @@ export class FileUrlHelper {
     switch (effectiveProvider) {
       case 'elastika':
         // Usamos encodeURIComponent para manejar correctamente caracteres especiales en la URL
-        return `http://161.132.48.141/files/${fullPath}`;
+        // return `http://161.132.48.141/files/${fullPath}`;
+        return `https://images.syncronize.net.pe/files/${fullPath}`;
 
       case 'firebase':
         // Usamos encodeURIComponent para manejar correctamente caracteres especiales en la URL

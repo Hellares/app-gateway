@@ -5,6 +5,7 @@ import {  ValidationPipe } from '@nestjs/common';
 import { CONSOLE_COLORS } from './common/constants/colors.constants';
 import { RpcCustomExceptionFilter } from './common/exceptions/rpc-custom-exception.filter';
 import { Logger, PinoLogger  } from 'nestjs-pino';
+import { DateFormatInterceptor } from 'jtorres-nestjs-common';
 
 async function bootstrap() {
   // const logger = new Logger(` ${CONSOLE_COLORS.TEXT.FUCHSIA}APP-GATEWAY ${CONSOLE_COLORS.TEXT.YELLOW}`);
@@ -33,6 +34,7 @@ async function bootstrap() {
   
 
   app.useGlobalFilters(new RpcCustomExceptionFilter());
+  app.useGlobalInterceptors(new DateFormatInterceptor());
 
   await app.listen(envs.port);
   

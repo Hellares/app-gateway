@@ -26,7 +26,7 @@ export class AuthService {
         },
       });
       
-      this.logger.debug(`Usuario registrado con éxito: ${registerUserDto.dni}`);
+      this.logger.debug(`Usuario registrado con exito: ${registerUserDto.dni}`);
       
       // Devolvemos la respuesta del microservicio
       return response.data;
@@ -36,14 +36,14 @@ export class AuthService {
       // Si el error tiene una respuesta del servidor, extraemos esa información
       if (error.response) {
         throw new HttpException({
-          message: error.response.data.error || 'Error en el servicio de autenticación',
+          message: error.response.data.error || 'Error en el servicio de autenticacion',
           statusCode: error.response.status,
         }, error.response.status);
       }
       
       // Si no hay respuesta, es un error de conexión
       throw new HttpException(
-        'Error de conexión con el servicio de autenticación', 
+        'Error de conexion con el servicio de autenticación', 
         HttpStatus.SERVICE_UNAVAILABLE
       );
     }
@@ -51,14 +51,14 @@ export class AuthService {
 
   async login(loginDto: LoginDto) {
     try {
-      this.logger.debug(`Intentando iniciar sesión para usuario con DNI: ${loginDto.dni}`);
+      this.logger.debug(`Intentando iniciar sesion para usuario con DNI: ${loginDto.dni}`);
       
       const response = await axios.post(`${this.authServiceUrl}/api/auth/login`, loginDto);
       
       // El microservicio devuelve un token JWT directamente
       const authToken = response.data.data.token;
       
-      this.logger.debug(`Inicio de sesión exitoso para usuario con DNI: ${loginDto.dni}`);
+      this.logger.debug(`Inicio de sesion exitoso para usuario con DNI: ${loginDto.dni}`);
       
       // Obtener información de usuario actual con el token
       const userResponse = await axios.get(`${this.authServiceUrl}/api/auth/me`, {
@@ -69,24 +69,24 @@ export class AuthService {
       
       return {
         success: true,
-        message: 'Inicio de sesión exitoso',
+        message: 'Inicio de sesion exitoso',
         data: {
           user: userResponse.data.data,
           token: authToken
         }
       };
     } catch (error) {
-      this.logger.error(`Error al iniciar sesión: ${error.message}`, error.stack);
+      this.logger.error(`Error al iniciar sesion: ${error.message}`, error.stack);
       
       if (error.response) {
         throw new HttpException({
-          message: error.response.data.error || 'Error en el servicio de autenticación',
+          message: error.response.data.error || 'Error en el servicio de autenticacion',
           statusCode: error.response.status,
         }, error.response.status);
       }
       
       throw new HttpException(
-        'Error de conexión con el servicio de autenticación', 
+        'Error de conexion con el servicio de autenticacion', 
         HttpStatus.SERVICE_UNAVAILABLE
       );
     }
@@ -105,7 +105,7 @@ export class AuthService {
           Authorization: `Bearer ${token}`
         }
       });
-      this.logger.debug(`Respuesta de validación: ${JSON.stringify(response.data)}`);
+      this.logger.debug(`Respuesta de validacion: ${JSON.stringify(response.data)}`);
       return response.data.data;
     } catch (error) {
       this.logger.error(`Error al validar token: ${error.message}`);
