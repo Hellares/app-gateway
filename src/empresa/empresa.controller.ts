@@ -57,10 +57,11 @@ export class EmpresaController {
         creadorId: userData.id,
         creadorDni: userData.dni,
         creadorEmail: userData.email,
-        creadorNombre: userData.firstName,
-        creadorApellido: userData.lastName,
-        creadorTelefono: userData.phone || '',
+        creadorNombres: userData.nombres,
+        creadorApellidos: userData.apellido_paterno,
+        creadorTelefono: userData.telefono || '',
       };
+      console.log(completeDto);
       
       // Enviar al microservicio de empresa
       return this.companiesClient.send('create.empresa', completeDto).pipe(

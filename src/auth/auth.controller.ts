@@ -1,5 +1,5 @@
 // src/auth/auth.controller.ts
-import { Body, Controller, Post, Logger } from '@nestjs/common';
+import { Body, Controller, Post, Logger, Headers } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterUserDto } from './dto/register-user.dto';
@@ -25,5 +25,15 @@ export class AuthController {
   @Post('login')
   async login(@Body() loginDto: LoginDto) {
     return this.authService.login(loginDto);
+  }
+
+  @Post('logout')
+  async logout(@Headers('authorization') authorization: string) {
+    return await this.authService.logout(authorization);
+  }
+
+  @Post('logout-all')
+  async logoutAll(@Headers('authorization') authorization: string) {
+    return await this.authService.logoutAll(authorization);
   }
 }

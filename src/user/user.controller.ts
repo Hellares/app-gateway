@@ -159,62 +159,264 @@ export class UserController {
 }
 
   
+// @Get('/me/empresas')
+// @UseGuards(JwtAuthGuard)
+// async getCurrentUserEmpresas(@Req() req): Promise<ResponseDto> {
+//   try {
+//     // Validar usuario
+//     if (!req.user || !req.user.dni) {
+//       throw new RpcException({
+//         success: false,
+//         message: 'Usuario no autenticado o datos incompletos',
+//         status: HttpStatus.UNAUTHORIZED,
+//       });
+//     }
+//     const userData = req.user;
 
-  // Obtener empresas del usuario actual
-  @Get('/me/empresas')
-  @UseGuards(JwtAuthGuard)
-  async getCurrentUserEmpresas(@Req() req) {
-    try {
-      const userData = req.user;
-      const token = req.headers.authorization.split(' ')[1];
-      
-      this.logger.debug(`Solicitando empresas para el usuario: ${userData.dni}`);
-      
-      // 1. Obtener IDs de empresas desde el microservicio de autenticación
-      const authResponse = await axios.get(
-        `${this.authServiceUrl}/api/auth/users/me/empresas`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      
-      const empresasIds = authResponse.data.data;
-      
-      if (!empresasIds || empresasIds.length === 0) {
-        return {
-          success: true,
-          data: [],
-          message: 'No se encontraron empresas para este usuario'
-        };
-      }
-      
-      // 2. Obtener detalles de empresas del microservicio de empresas
-      const empresasResponse = await firstValueFrom(
-        this.companiesClient.send('empresas.by.ids', { empresasIds })
-          .pipe(
-            timeout(10000),
-            catchError(err => {
-              if (err instanceof TimeoutError) {
-                throw new RpcException({
-                  message: 'El servicio no está respondiendo',
-                  status: HttpStatus.GATEWAY_TIMEOUT
-                });
-              }
-              throw new RpcException(err);
-            })
-          )
-      );
-      
-      return {
-        success: true,
-        data: empresasResponse.data,
-      };
-    } catch (error) {
-      this.logger.error(`Error al obtener empresas del usuario: ${error.message}`);
+//     // Validar token
+//     const authHeader = req.headers.authorization;
+//     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+//       throw new RpcException({
+//         success: false,
+//         message: 'Token de autorización inválido o ausente',
+//         status: HttpStatus.UNAUTHORIZED,
+//       });
+//     }
+//     const token = authHeader.split(' ')[1];
+
+//     this.logger.debug(`Solicitando empresas optimizadas para usuario: ${userData.dni}`);
+
+//     // Consultar microservicio de autenticación
+//     const authResponse = await axios.get(
+//       `${this.authServiceUrl}/api/auth/users/me/empresas-optimized`,
+//       { headers: { Authorization: `Bearer ${token}` } }
+//     );
+//     const empresasConRoles: EmpresaConRol[] = authResponse.data.data;
+
+//     if (!empresasConRoles || empresasConRoles.length === 0) {
+//       return {
+//         success: true,
+//         data: [],
+//         message: 'No se encontraron empresas para este usuario',
+//         meta: { total: 0, userId: userData.id, userDni: userData.dni },
+//       };
+//     }
+
+//     // Extraer IDs
+//     const empresasIds = empresasConRoles.map(item => item.empresaId);
+//     this.logger.debug(`IDs de empresas: ${empresasIds.join(', ')}`);
+
+//     // Consultar microservicio de empresas
+//     const empresasResponse = await firstValueFrom(
+//       this.companiesClient.send('empresas.by.ids', { empresasIds })
+//         .pipe(timeout(10000))
+//     );
+
+//     if (!empresasResponse || !empresasResponse.data) {
+//       throw new RpcException({
+//         success: false,
+//         message: 'No se pudo obtener información de empresas',
+//         status: HttpStatus.INTERNAL_SERVER_ERROR,
+//       });
+//     }
+
+//     // Mapear empresas con roles usando un Map
+//     const empresasConRolesMap = new Map(empresasConRoles.map(item => [item.empresaId, item]));
+//     const empresasCompletas: EmpresaCompleta[] = empresasResponse.data.map(empresa => {
+//       const empresaConRol = empresasConRolesMap.get(empresa.id);
+//       return {
+//         id: empresa.id,
+//         razonSocial: empresa.razonSocial,
+//         ruc: empresa.ruc,
+//         estado: empresa.estado,
+//         roles: empresaConRol?.roles,
+//       };
+//     });
+
+//     return {
+//       success: true,
+//       data: empresasCompletas,
+//       meta: { total: empresasCompletas.length, userId: userData.id, userDni: userData.dni },
+//     };
+//   } catch (error) {
+//     this.logger.error(`Error en empresas optimizadas: ${error.message}`);
+//     throw new RpcException({
+//       success: false,
+//       message: error.response?.status === 404
+//         ? 'Endpoint optimizado no encontrado, usando método anterior'
+//         : error.message || 'Error al obtener empresas del usuario',
+//       status: error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+//     });
+//   }
+// }
+
+@Get('/me/empresas')
+@UseGuards(JwtAuthGuard)
+async getCurrentUserEmpresas(@Req() req): Promise<ResponseDto> {
+  // const startTime = Date.now();
+  
+  try {
+    // Validar usuario
+    if (!req.user || !req.user.dni) {
       throw new RpcException({
-        message: error.message || 'Error al obtener empresas del usuario',
-        status: error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+        success: false,
+        message: 'Usuario no autenticado o datos incompletos',
+        status: HttpStatus.UNAUTHORIZED,
       });
     }
+    const userData = req.user;
+
+    // Validar token
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new RpcException({
+        success: false,
+        message: 'Token de autorizacion invalido o ausente',
+        status: HttpStatus.UNAUTHORIZED,
+      });
+    }
+    const token = authHeader.split(' ')[1];
+
+    this.logger.debug(`Solicitando empresas optimizadas para usuario: ${userData.dni}`);
+
+    // Consultar microservicio de autenticación
+    const authResponse = await axios.get(
+      `${this.authServiceUrl}/api/auth/users/me/empresas-optimized`,
+      { 
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 8000 // Timeout específico para Auth MS
+      }
+    );
+    
+    const empresasConRoles: EmpresaConRol[] = authResponse.data.data;
+    this.logger.debug(`Auth MS devolvio ${empresasConRoles?.length || 0} empresas con roles`);
+
+    if (!empresasConRoles || empresasConRoles.length === 0) {
+      return {
+        success: true,
+        data: [],
+        message: 'No se encontraron empresas para este usuario',
+        meta: { 
+          total: 0, 
+          userId: userData.id, 
+          userDni: userData.dni,
+          // responseTimeMs: Date.now() - startTime
+        },
+      };
+    }
+
+    // Extraer IDs y validar
+    const empresasIds = empresasConRoles
+      .map(item => item.empresaId)
+      .filter(id => id && typeof id === 'string');
+      
+    if (empresasIds.length === 0) {
+      this.logger.warn('No se encontraron IDs validos de empresas');
+      return {
+        success: true,
+        data: [],
+        message: 'No se encontraron empresas válidas',
+        meta: { total: 0, userId: userData.id, userDni: userData.dni },
+      };
+    }
+
+    this.logger.debug(`IDs de empresas validos: ${empresasIds.join(', ')}`);
+
+    // Consultar microservicio de empresas
+    const empresasResponse = await firstValueFrom(
+      this.companiesClient.send('empresas.by.ids', { empresasIds })
+        .pipe(timeout(10000))
+    );
+
+    // Validación robusta de respuesta
+    if (!empresasResponse?.data || !Array.isArray(empresasResponse.data)) {
+      throw new RpcException({
+        success: false,
+        message: 'Respuesta invalida del servicio de empresas',
+        status: HttpStatus.INTERNAL_SERVER_ERROR,
+      });
+    }
+
+    this.logger.debug(`Company MS devolvio ${empresasResponse.data.length} empresas`);
+
+    // Mapear empresas con roles usando Map para performance O(1)
+    const empresasConRolesMap = new Map(
+      empresasConRoles.map(item => [item.empresaId, item])
+    );
+    
+    const empresasCompletas: EmpresaCompleta[] = empresasResponse.data.map(empresa => {
+      const empresaConRol = empresasConRolesMap.get(empresa.id);
+      return {
+        id: empresa.id,
+        razonSocial: empresa.razonSocial,
+        ruc: empresa.ruc,
+        estado: empresa.estado,
+        roles: empresaConRol?.roles || ['VIEWER'], // Fallback explícito
+      };
+    });
+
+    // Logging de calidad de datos
+    const empresasSinRoles = empresasCompletas.filter(emp => 
+      !emp.roles || emp.roles.length === 0 || emp.roles.includes('VIEWER')
+    );
+    if (empresasSinRoles.length > 0) {
+      this.logger.warn(`${empresasSinRoles.length} empresas con roles por defecto o vacíos`);
+    }
+
+    // const responseTime = Date.now() - startTime;
+    // this.logger.debug(`Consulta completada en ${responseTime}ms`);
+
+    return {
+      success: true,
+      data: empresasCompletas,
+      meta: { 
+        total: empresasCompletas.length, 
+        userId: userData.id, 
+        userDni: userData.dni,
+        // responseTimeMs: responseTime,
+        // optimized: true
+      },
+    };
+
+  } catch (error: any) {
+    // const responseTime = Date.now() - startTime;
+    
+    // Log detallado del error
+    this.logger.error(`Error en empresas optimizadas: ${error.message}`, {
+      userId: req.user?.id,
+      userDni: req.user?.dni,
+      errorStatus: error.response?.status,
+      // responseTimeMs: responseTime,
+      stack: error.stack
+    });
+
+    // Manejo específico de errores
+    if (error.code === 'ECONNREFUSED') {
+      throw new RpcException({
+        success: false,
+        message: 'Servicio de autenticación no disponible',
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+      });
+    }
+
+    if (error.code === 'TIMEOUT' || error.name === 'TimeoutError') {
+      throw new RpcException({
+        success: false,
+        message: 'Timeout en la consulta de empresas',
+        status: HttpStatus.REQUEST_TIMEOUT,
+      });
+    }
+
+    throw new RpcException({
+      success: false,
+      message: error.response?.status === 404
+        ? 'Endpoint optimizado no encontrado'
+        : error.message || 'Error al obtener empresas del usuario',
+      status: error.response?.status || error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+    });
   }
+}
+
 
   @Get('/search') //! Endpoint para buscar usuarios por identificador (DNI, email o teléfono)
 @UseGuards(JwtAuthGuard)
@@ -611,4 +813,35 @@ async listAllUsersInEmpresa(
   // - Cambiar rol de usuario
   // - Obtener permisos de usuario
   // - etc.
+}
+
+interface EmpresaConRol {
+  empresaId: string;
+  roles: string[];
+}
+
+interface Empresa {
+  id: string;
+  razonSocial: string;
+  ruc: string;
+  estado: string;
+}
+
+interface EmpresaCompleta {
+  id: string;
+  razonSocial: string;
+  ruc: string;
+  estado: string;
+  roles: string[];
+}
+
+interface ResponseDto {
+  success: boolean;
+  data: EmpresaCompleta[];
+  message?: string;
+  meta?: {
+    total: number;
+    userId: string;
+    userDni: string;
+  };
 }
