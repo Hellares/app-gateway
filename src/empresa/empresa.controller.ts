@@ -9,7 +9,7 @@ import { FileUrlHelper } from 'src/files/common/helpers/file-url.helper';
 import { RedisService } from 'src/redis/redis.service';
 import { CACHE_KEYS } from 'src/redis/constants/redis-cache.keys.contants';
 import { REDIS_GATEWAY_CONFIG } from 'src/redis/config/redis.constants';
-import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+// import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import axios from 'axios';
 import { envs } from 'src/config';
 
@@ -43,7 +43,7 @@ export class EmpresaController {
   // }
 
   @Post()
-  @UseGuards(JwtAuthGuard) // Proteger con autenticación
+  // @UseGuards(JwtAuthGuard) // Proteger con autenticación
   async create(@Body() createCompanyDto: CreateEmpresaDto, @Req() req) {
     try {
       // Obtener datos del usuario autenticado
@@ -86,7 +86,7 @@ export class EmpresaController {
   }
 
   @Get('/mis-empresas')
-@UseGuards(JwtAuthGuard)
+// @UseGuards(JwtAuthGuard)
 async getCompaniesByUser(@Req() req) {
   try {
     // Obtener datos del usuario autenticado

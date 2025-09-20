@@ -5,10 +5,15 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
-import { JwtStrategy } from './strategies/jwt.strategy';
+// import { JwtStrategy } from './strategies/jwt.strategy';
 import { envs } from '../config';
 import { RabbitMQModule } from 'src/transports/rabbitmq.module';
 import { HttpModule } from '@nestjs/axios';
+import { EmpresaGuard } from './guards/empresa.guard';
+import { EmpresaContextMiddlewareOptimized } from './middleware/empresa-context.middleware';
+import { HybridAuthGuard } from './guards/hybrid-auth.guard';
+import { RedisModule } from 'src/redis/redis.module';
+// import { EmpresaContextMiddleware } from './middleware/empresa-context.middleware';
 
 @Module({
   imports: [
@@ -20,9 +25,23 @@ import { HttpModule } from '@nestjs/axios';
       signOptions: { expiresIn: '24h' },
     }),
     RabbitMQModule,
+    RedisModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
-  exports: [AuthService, JwtModule, PassportModule],
+  providers: [
+    AuthService, 
+    // JwtStrategy,
+    EmpresaGuard,
+    EmpresaContextMiddlewareOptimized,
+    HybridAuthGuard,
+  ],
+  exports: [
+    AuthService, 
+    JwtModule, 
+    PassportModule,
+    EmpresaGuard,
+    HybridAuthGuard,
+    EmpresaContextMiddlewareOptimized,
+  ],
 })
 export class AuthModule {}

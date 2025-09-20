@@ -9,6 +9,10 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterUserDto } from './dto/register-user.dto';
 import axios from 'axios';
 import { SERVICES } from 'src/transports/constants';
+import { RedisService } from 'src/redis/redis.service';
+import { CACHE_KEYS } from 'src/redis/constants/redis-cache.keys.contants';
+import { REDIS_AUTH_CONFIG, REDIS_GATEWAY_CONFIG } from 'src/redis/config/redis.constants';
+import { createHash } from 'crypto';
 
 @Injectable()
 export class AuthService {
@@ -19,7 +23,49 @@ export class AuthService {
     private readonly httpService: HttpService,
     // private readonly configService: ConfigService,
     @Inject(SERVICES.COMPANY) private readonly companiesClient: ClientProxy,
+    private readonly redisService: RedisService,
   ) {}
+
+  // ✅ AGREGAR: Método ligero de validación que solo decodifica JWT
+  validateTokenLight(token: string): any {
+    try {
+      return this.decodeJWTPayload(token);
+    } catch (error) {
+      this.logger.debug(`Token ligero inválido: ${error.message}`);
+      return null;
+    }
+  }
+
+  // ✅ AGREGAR: Decodificación local de JWT sin llamar al microservicio
+  private decodeJWTPayload(token: string): any {
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) {
+        throw new Error('Invalid JWT format');
+      }
+      
+      const payload = parts[1];
+      const decoded = Buffer.from(payload, 'base64url').toString('utf8');
+      const parsed = JSON.parse(decoded);
+      
+      // Verificar que no esté expirado
+      if (parsed.exp && Date.now() >= parsed.exp * 1000) {
+        throw new Error('Token expired');
+      }
+      
+      return {
+        userId: parsed.userId || parsed.userID, // Manejar ambas variaciones
+        dni: parsed.dni,
+        email: parsed.email,
+        empresaId: parsed.empresaId,
+        roles: parsed.roles,
+        principalRole: parsed.principalRole,
+        permissions: parsed.permissions
+      };
+    } catch (error) {
+      throw new Error(`Failed to decode JWT: ${error.message}`);
+    }
+  }
 
     async register(registerUserDto: RegisterUserDto) {
     try {
@@ -55,68 +101,61 @@ export class AuthService {
     }
   }
 
+  
   async login(loginDto: LoginDto) {
-    // Validación temprana
+    const startTime = Date.now();
     this.validateLoginInput(loginDto);
     
-    this.logger.debug(`Intentando iniciar sesion para usuario con DNI: ${loginDto.dni}`);
+    this.logger.debug(`Iniciando login para usuario: ${loginDto.dni}`);
 
-    // Realizar petición - El interceptor manejará TODOS los errores
+    // Intentar obtener desde caché
+    const loginCacheKey = CACHE_KEYS.AUTH.USER_LOGIN(loginDto.dni);
+    const cachedLogin = await this.redisService.get(loginCacheKey);
+    
+    if (cachedLogin.success && cachedLogin.data) {
+      const cacheTime = Date.now() - startTime;
+      this.logger.debug(`Cache hit para login: ${loginDto.dni} (${cacheTime}ms)`);
+      
+      // Refresh asincrono si es necesario
+      if (cachedLogin.details?.ttl && cachedLogin.details.ttl < REDIS_AUTH_CONFIG.LOGIN.REFRESH_THRESHOLD) {
+        this.refreshLoginCache(loginDto, loginCacheKey).catch(err => 
+          this.logger.error('Error refreshing login cache:', err)
+        );
+      }
+      
+      return cachedLogin.data;
+    }
+
+    this.logger.debug(`Cache miss para login: ${loginDto.dni}`);
+
+    // Realizar login normal si no hay caché
     const response = await firstValueFrom(
       this.httpService
         .post(`${this.authServiceUrl}/api/auth/login`, loginDto, {
           headers: { 'Content-Type': 'application/json' },
         })
-        .pipe(timeout(10000)) // El interceptor manejará el timeout
+        .pipe(timeout(10000))
     );
 
-    // Procesar respuesta exitosa
-    return await this.processSuccessfulLogin(response.data.data);
+    // Procesar respuesta
+    const processedResponse = await this.processSuccessfulLogin(response.data.data);
+
+    // Calcular TTL dinámico basado en el tipo de usuario
+    const ttl = this.calculateTTLForUser(processedResponse.data);
+
+    // Guardar en caché de forma asíncrona
+    this.redisService.set(
+      loginCacheKey,
+      processedResponse,
+      ttl
+    ).catch(e => this.logger.error('Error caching login:', e));
+
+    const totalTime = Date.now() - startTime;
+    this.logger.debug(`Login completado para ${loginDto.dni}: ${totalTime}ms`);
+
+    return processedResponse;
   }
 
-  // async selectEmpresa(selectEmpresaDto: SelectEmpresaDto) {
-  //   this.validateEmpresaSelection(selectEmpresaDto);
-
-  //   const response = await firstValueFrom(
-  //     this.httpService
-  //       .post(`${this.authServiceUrl}/api/auth/select-empresa`, selectEmpresaDto)
-  //       .pipe(timeout(5000))
-  //   );
-
-  //   return {
-  //     success: true,
-  //     message: 'Empresa seleccionada exitosamente',
-  //     data: response.data.data
-  //   };
-  // }
-
-  // async refreshToken(refreshTokenDto: RefreshTokenDto) {
-  //   const response = await firstValueFrom(
-  //     this.httpService
-  //       .post(`${this.authServiceUrl}/api/auth/refresh`, refreshTokenDto)
-  //       .pipe(timeout(5000))
-  //   );
-
-  //   return {
-  //     success: true,
-  //     message: 'Token renovado exitosamente',
-  //     data: response.data.data
-  //   };
-  // }
-
-  // async logout(logoutDto: LogoutDto) {
-  //   const response = await firstValueFrom(
-  //     this.httpService
-  //       .post(`${this.authServiceUrl}/api/auth/logout`, logoutDto)
-  //       .pipe(timeout(3000))
-  //   );
-
-  //   return {
-  //     success: true,
-  //     message: 'Sesión cerrada exitosamente',
-  //     data: null
-  //   };
-  // }
 
   // Métodos privados de validación
   private validateLoginInput(loginDto: LoginDto): void {
@@ -139,18 +178,9 @@ export class AuthService {
     }
   }
 
-  // private validateEmpresaSelection(dto: SelectEmpresaDto): void {
-  //   if (!dto.empresaId || !dto.token) {
-  //     throw new RpcException({
-  //       message: 'Empresa ID y token son requeridos',
-  //       status: HttpStatus.BAD_REQUEST,
-  //       code: ErrorCode.VALIDATION_ERROR,
-  //       error: 'Error de Validación'
-  //     });
-  //   }
-  // }
 
   private async processSuccessfulLogin(loginData: any) {
+    
     this.logger.debug(`Login exitoso. Usuario tiene: ${loginData.empresas?.length || 0} empresas`);
 
     const empresasEnriquecidas = await this.enrichEmpresasIfPresent(loginData.empresas);
@@ -184,107 +214,432 @@ export class AuthService {
   }
 
 
-  private async enrichEmpresasWithDetails(empresasAuth: EmpresaAuth[]): Promise<EmpresaEnriquecida[]> {
-  this.logger.debug(`Enriqueciendo ${empresasAuth.length} empresas con detalles...`);
+// private async enrichEmpresasWithDetails(empresasAuth: EmpresaAuth[]): Promise<EmpresaEnriquecida[]> {
+//     if (!empresasAuth?.length) return [];
 
-  // Validar y filtrar IDs (UUIDs)
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+//   const enrichStartTime = Date.now();
+  
+//   // ✅ CORRECCIÓN: usar empresaId en lugar de id
+//   const empresasIds = empresasAuth.map(e => e.id).sort();
+//   const empresasHash = this.hashIds(empresasIds);
+//   const empresasCacheKey = CACHE_KEYS.AUTH.EMPRESAS_ENRICHED(empresasHash);
+  
+//   this.logger.debug(`Buscando empresas enriquecidas en caché: ${empresasIds.length} empresas`);
+  
+//   const cachedEmpresas = await this.redisService.get(empresasCacheKey);
+  
+//   // ✅ CORRECCIÓN: validar que sea un array válido
+//   if (cachedEmpresas.success && 
+//       cachedEmpresas.data && 
+//       Array.isArray(cachedEmpresas.data) && 
+//       cachedEmpresas.data.length > 0) {
+    
+//     const cacheTime = Date.now() - enrichStartTime;
+//     this.logger.debug(`Cache hit para empresas enriquecidas (${cacheTime}ms)`);
+    
+//     // Refresh asincrono si es necesario
+//     if (cachedEmpresas.details?.ttl && cachedEmpresas.details.ttl < REDIS_AUTH_CONFIG.EMPRESAS.REFRESH_THRESHOLD) {
+//       this.refreshEmpresasCache(empresasAuth, empresasCacheKey).catch(err =>
+//         this.logger.error('Error refreshing empresas cache:', err)
+//       );
+//     }
+    
+//     // ✅ CORRECCIÓN: asegurar tipado correcto
+//     return cachedEmpresas.data as EmpresaEnriquecida[];
+//   }
+
+//   this.logger.debug(`Cache miss para empresas enriquecidas`);
+
+//     try {
+//       // Timeout dinámico basado en cantidad de empresas
+//       const timeoutMs = Math.min(8000, empresasIds.length * 800);
+      
+//       const empresasResponse = await firstValueFrom(
+//         this.companiesClient.send('empresas.by.ids', { empresasIds }).pipe(
+//           timeout(timeoutMs),
+//           catchError(err => {
+//             this.logger.warn(`Error obteniendo detalles de empresas: ${err.message}`);
+//             return of({ data: [] });
+//           })
+//         )
+//       );
+
+//       const empresasDetailMap = new Map<string, EmpresaDetail>(
+//         empresasResponse.data?.map((empresa: EmpresaDetail) => [empresa.id, empresa]) || []
+//       );
+
+//       const empresasEnriquecidas: EmpresaEnriquecida[] = empresasAuth.map(empresaAuth => {
+//         const empresaDetail = empresasDetailMap.get(empresaAuth.id);
+        
+//         return {
+//           id: empresaAuth.id,
+//           razonSocial: empresaDetail?.razonSocial || null,
+//           ruc: empresaDetail?.ruc || null,
+//           estado: empresaDetail?.estado,
+//           rubro: empresaDetail?.rubro || null,
+//           roles: empresaAuth.roles || [],
+//           principalRole: empresaAuth.principalRole,
+//           permissions: empresaAuth.permissions || [],
+//         };
+//       });
+
+//       // Guardar en caché con TTL apropiado
+//       this.redisService.set(
+//         empresasCacheKey,
+//         empresasEnriquecidas,
+//         REDIS_AUTH_CONFIG.EMPRESAS.TTL
+//       ).catch(e => this.logger.error('Error caching empresas:', e));
+
+//       const enrichTime = Date.now() - enrichStartTime;
+//       this.logger.debug(`Empresas enriquecidas procesadas: ${enrichTime}ms`);
+      
+//       return empresasEnriquecidas;
+
+//     } catch (error) {
+//       this.logger.error(`Error enriqueciendo empresas: ${error.message}`);
+//       return this.createFallbackEmpresas(empresasAuth);
+//     }
+//   }
+
+private async enrichEmpresasWithDetails(empresasAuth: EmpresaAuth[]): Promise<EmpresaEnriquecida[]> {
+  if (!empresasAuth?.length) return [];
+
+  const enrichStartTime = Date.now();
+  
+  // Extraer y validar IDs de empresas
   const empresasIds = empresasAuth
-    .map(empresa => empresa.id)
-    .filter(id => id && typeof id === 'string' && uuidRegex.test(id));
-
+    .map(e => e.id || e.id)
+    .filter(id => id && typeof id === 'string')
+    .sort();
+    
   if (empresasIds.length === 0) {
-    this.logger.warn('No se encontraron IDs válidos de empresas para enriquecer');
+    this.logger.warn('No se encontraron IDs válidos de empresas');
     return this.createFallbackEmpresas(empresasAuth);
   }
 
-  try {
-    // Consultar microservicio de empresas
-    const timeoutMs = Math.min(10000, empresasIds.length * 1000);
+  const empresasHash = this.hashIds(empresasIds);
+  const empresasCacheKey = CACHE_KEYS.AUTH.EMPRESAS_ENRICHED(empresasHash);
+  
+  this.logger.debug(`Buscando empresas enriquecidas en caché: ${empresasIds.length} empresas`);
+  
+  // Verificar caché
+  const cachedEmpresas = await this.redisService.get(empresasCacheKey);
+  
+  if (cachedEmpresas.success && 
+      cachedEmpresas.data && 
+      Array.isArray(cachedEmpresas.data) && 
+      cachedEmpresas.data.length > 0) {
     
-    const empresasResponse = await firstValueFrom(
-      this.companiesClient.send('empresas.by.ids', { empresasIds }).pipe(
-        timeout(timeoutMs),
-        catchError(err => {
-          // Log pero no lanzar - devolver respuesta vacía para manejar gracefully
-          this.logger.warn(
-            `No se pudieron obtener detalles de empresas: ${err.message}`,
-            { empresasIds, error: err.message }
-          );
-          return of({ data: [], failedIds: empresasIds });
-        })
+    const cacheTime = Date.now() - enrichStartTime;
+    this.logger.debug(`Cache hit para empresas enriquecidas (${cacheTime}ms)`);
+    
+    // Refresh asíncrono si es necesario
+    if (cachedEmpresas.details?.ttl && cachedEmpresas.details.ttl < REDIS_AUTH_CONFIG.EMPRESAS.REFRESH_THRESHOLD) {
+      this.refreshEmpresasCache(empresasAuth, empresasCacheKey).catch(err =>
+        this.logger.error('Error refreshing empresas cache:', err)
+      );
+    }
+    
+    return cachedEmpresas.data as EmpresaEnriquecida[];
+  }
+
+  this.logger.debug(`Cache miss para empresas enriquecidas`);
+
+  try {
+    // Paralelización con lotes
+    const batchSize = 10; // Procesar de 10 en 10
+    const batches = [];
+    
+    for (let i = 0; i < empresasIds.length; i += batchSize) {
+      batches.push(empresasIds.slice(i, i + batchSize));
+    }
+
+    this.logger.debug(`Procesando ${empresasIds.length} empresas en ${batches.length} lotes paralelos`);
+
+    // Procesar todos los lotes en paralelo con timeout individual
+    const batchPromises = batches.map((batch, index) => 
+      firstValueFrom(
+        this.companiesClient.send('empresas.by.ids', { empresasIds: batch }).pipe(
+          timeout(5000), // Timeout por lote
+          catchError(err => {
+            this.logger.warn(`Error en lote ${index + 1}: ${err.message}`);
+            return of({ data: [] }); // Retornar array vacío en caso de error
+          })
+        )
       )
     );
 
-    // Validar respuesta
-    if (!empresasResponse?.data || !Array.isArray(empresasResponse.data)) {
-      this.logger.warn('Respuesta inválida del servicio de empresas, usando datos básicos');
-      return this.createFallbackEmpresas(empresasAuth);
-    }
+    // Esperar a que todos los lotes se completen
+    const batchResults = await Promise.allSettled(batchPromises);
+    
+    // Combinar resultados de todos los lotes
+    const allEmpresas: EmpresaDetail[] = [];
+    let successfulBatches = 0;
+    
+    batchResults.forEach((result, index) => {
+      if (result.status === 'fulfilled' && result.value?.data) {
+        allEmpresas.push(...result.value.data);
+        successfulBatches++;
+      } else {
+        this.logger.warn(`Lote ${index + 1} falló o retornó datos vacíos`);
+      }
+    });
 
-    // Log de IDs fallidos si los hay
-    if (empresasResponse.failedIds?.length > 0) {
-      this.logger.debug(
-        `${empresasResponse.failedIds.length} empresas no encontradas en el servicio`,
-        { failedIds: empresasResponse.failedIds }
-      );
-    }
+    this.logger.debug(`${successfulBatches}/${batches.length} lotes exitosos, ${allEmpresas.length} empresas obtenidas`);
 
-    // Mapear respuestas para búsqueda rápida
+    // Crear mapa para búsqueda O(1)
     const empresasDetailMap = new Map<string, EmpresaDetail>(
-      empresasResponse.data.map((empresa: EmpresaDetail) => [empresa.id, empresa])
+      allEmpresas.map((empresa: EmpresaDetail) => [empresa.id, empresa])
     );
 
-    // Combinar datos de auth con detalles de empresa
+    // Enriquecer datos combinando auth + detalles
     const empresasEnriquecidas: EmpresaEnriquecida[] = empresasAuth.map(empresaAuth => {
-      const empresaDetail = empresasDetailMap.get(empresaAuth.id);
+      const empresaId = empresaAuth.id || empresaAuth.id;
+      const empresaDetail = empresasDetailMap.get(empresaId);
       
-      if (!empresaDetail) {
-        this.logger.debug(`Empresa ${empresaAuth.id} no tiene detalles, usando valores por defecto`);
-      }
-
       return {
-        // Datos del auth service (siempre presentes)
-        id: empresaAuth.id,
+        id: empresaId,
         razonSocial: empresaDetail?.razonSocial || null,
         ruc: empresaDetail?.ruc || null,
-        estado: empresaDetail?.estado || 'ACTIVO', // Default más optimista
+        estado: empresaDetail?.estado || 'ACTIVO',
         rubro: empresaDetail?.rubro || null,
-        roles: empresaAuth.roles,
-        principalRole: empresaAuth.principalRole,
-        permissions: empresaAuth.permissions,
+        roles: empresaAuth.roles || [],
+        principalRole: empresaAuth.principalRole || 'USER',
+        permissions: empresaAuth.permissions || [],
       };
     });
+
+    // Guardar en caché solo si tenemos datos válidos
+    if (empresasEnriquecidas.length > 0) {
+      this.redisService.set(
+        empresasCacheKey,
+        empresasEnriquecidas,
+        REDIS_AUTH_CONFIG.EMPRESAS.TTL
+      ).catch(e => this.logger.error('Error caching empresas:', e));
+    }
+
+    const enrichTime = Date.now() - enrichStartTime;
+    this.logger.debug(`Empresas enriquecidas procesadas: ${enrichTime}ms (${empresasEnriquecidas.length} empresas)`);
     
     return empresasEnriquecidas;
 
   } catch (error) {
-    // Este catch solo se ejecutará si hay un error no manejado
-    // El interceptor global lo convertirá en RpcException
-    this.logger.error(
-      'Error crítico enriqueciendo empresas, usando fallback',
-      { error: error.message, stack: error.stack }
-    );
+    this.logger.error(`Error enriqueciendo empresas: ${error.message}`);
     return this.createFallbackEmpresas(empresasAuth);
   }
 }
 
+// Método de refresh también con paralelización
+private async refreshEmpresasCache(empresasAuth: EmpresaAuth[], cacheKey: string): Promise<void> {
+  try {
+    this.logger.debug(`Refrescando caché de empresas para ${empresasAuth.length} empresas`);
+    
+    const empresasIds = empresasAuth
+      .map(e => e.id || e.id)
+      .filter(id => id && typeof id === 'string');
+
+    // Paralelización también en el refresh
+    const batchSize = 10;
+    const batches = [];
+    
+    for (let i = 0; i < empresasIds.length; i += batchSize) {
+      batches.push(empresasIds.slice(i, i + batchSize));
+    }
+
+    const batchPromises = batches.map(batch => 
+      firstValueFrom(
+        this.companiesClient.send('empresas.by.ids', { empresasIds: batch }).pipe(
+          timeout(4000), // Timeout más corto para refresh
+          catchError(err => {
+            this.logger.warn(`Error en refresh de lote: ${err.message}`);
+            return of({ data: [] });
+          })
+        )
+      )
+    );
+
+    const batchResults = await Promise.allSettled(batchPromises);
+    
+    // Combinar resultados
+    const allEmpresas: EmpresaDetail[] = [];
+    batchResults.forEach(result => {
+      if (result.status === 'fulfilled' && result.value?.data) {
+        allEmpresas.push(...result.value.data);
+      }
+    });
+
+    const empresasDetailMap = new Map<string, EmpresaDetail>(
+      allEmpresas.map((empresa: EmpresaDetail) => [empresa.id, empresa])
+    );
+
+    const empresasEnriquecidas = empresasAuth.map(empresaAuth => {
+      const empresaId = empresaAuth.id || empresaAuth.id;
+      const empresaDetail = empresasDetailMap.get(empresaId);
+      
+      return {
+        id: empresaId,
+        razonSocial: empresaDetail?.razonSocial || null,
+        ruc: empresaDetail?.ruc || null,
+        estado: empresaDetail?.estado || 'ACTIVO',
+        rubro: empresaDetail?.rubro || null,
+        roles: empresaAuth.roles || [],
+        principalRole: empresaAuth.principalRole || 'USER',
+        permissions: empresaAuth.permissions || [],
+      };
+    });
+
+    await this.redisService.set(cacheKey, empresasEnriquecidas, REDIS_AUTH_CONFIG.EMPRESAS.TTL);
+    
+    this.logger.debug(`Caché de empresas refrescado exitosamente`);
+    
+  } catch (error) {
+    this.logger.error(`Error refrescando caché de empresas: ${error.message}`);
+  }
+}
+
+// Método auxiliar mejorado para fallback
 private createFallbackEmpresas(empresasAuth: EmpresaAuth[]): EmpresaEnriquecida[] {
   this.logger.debug('Creando empresas con datos mínimos (fallback)');
   
   return empresasAuth.map(empresaAuth => ({
-    id: empresaAuth.id,
+    id: empresaAuth.id || empresaAuth.id || 'unknown',
     razonSocial: null,
     ruc: null,
-    estado: 'ACTIVO', // Asumimos activo si no podemos verificar
+    estado: 'ACTIVO',
     rubro: null,
-    roles: empresaAuth.roles,
-    principalRole: empresaAuth.principalRole,
-    permissions: empresaAuth.permissions,
-    
-    
+    roles: empresaAuth.roles || [],
+    principalRole: empresaAuth.principalRole || 'USER',
+    permissions: empresaAuth.permissions || [],
   }));
 }
+
+  // Refresh asíncrono del caché de login
+  private async refreshLoginCache(loginDto: LoginDto, cacheKey: string): Promise<void> {
+    try {
+      this.logger.debug(`Refrescando caché de login para: ${loginDto.dni}`);
+      
+      const response = await firstValueFrom(
+        this.httpService.post(`${this.authServiceUrl}/api/auth/login`, loginDto, {
+          headers: { 'Content-Type': 'application/json' },
+        }).pipe(
+          timeout(REDIS_GATEWAY_CONFIG.TIMEOUTS.OPERATION)
+        )
+      );
+      
+      const processedResponse = await this.processSuccessfulLogin(response.data.data);
+      const ttl = this.calculateTTLForUser(processedResponse.data);
+      
+      await this.redisService.set(cacheKey, processedResponse, ttl);
+      
+      this.logger.debug(`Caché de login refrescado para: ${loginDto.dni}`);
+    } catch (error) {
+      this.logger.error(`Error refrescando caché de login: ${error.message}`);
+    }
+  }
+
+  // Refresh asíncrono del caché de empresas
+  // private async refreshEmpresasCache(empresasAuth: EmpresaAuth[], cacheKey: string): Promise<void> {
+  //   try {
+  //     this.logger.debug(`Refrescando caché de empresas para ${empresasAuth.length} empresas`);
+      
+  //     const empresasIds = empresasAuth.map(e => e.id);
+  //     const empresasResponse = await firstValueFrom(
+  //       this.companiesClient.send('empresas.by.ids', { empresasIds }).pipe(
+  //         timeout(REDIS_GATEWAY_CONFIG.TIMEOUTS.OPERATION)
+  //       )
+  //     );
+
+  //     const empresasDetailMap = new Map<string, EmpresaDetail>(
+  //       empresasResponse.data?.map((empresa: EmpresaDetail) => [empresa.id, empresa]) || []
+  //     );
+
+  //     const empresasEnriquecidas = empresasAuth.map(empresaAuth => {
+  //       const empresaDetail = empresasDetailMap.get(empresaAuth.id);
+  //       return {
+  //         id: empresaAuth.id,
+  //         razonSocial: empresaDetail?.razonSocial || null,
+  //         ruc: empresaDetail?.ruc || null,
+  //         estado: empresaDetail?.estado,
+  //         rubro: empresaDetail?.rubro || null,
+  //         roles: empresaAuth.roles || [],
+  //         permissions: empresaAuth.permissions || [],
+  //       };
+  //     });
+
+  //     await this.redisService.set(cacheKey, empresasEnriquecidas, REDIS_AUTH_CONFIG.EMPRESAS.TTL);
+      
+  //   } catch (error) {
+  //     this.logger.error(`Error refrescando caché de empresas: ${error.message}`);
+  //   }
+  // }
+
+  // Calcular TTL dinámico basado en el usuario
+  private calculateTTLForUser(loginData: any): number {
+    const baseTTL = REDIS_AUTH_CONFIG.LOGIN.TTL;
+    
+    // Super admins -> TTL más corto (permisos críticos)
+    if (loginData.isSuperAdmin) {
+      return Math.floor(baseTTL * 0.5); // 5 minutos
+    }
+    
+    // Usuarios con múltiples empresas -> TTL medio
+    if (loginData.needsEmpresaSelection) {
+      return Math.floor(baseTTL * 0.7); // 7 minutos
+    }
+    
+    // Usuarios normales -> TTL completo
+    return baseTTL; // 10 minutos
+  }
+
+  // Invalidación inteligente de caché
+  async invalidateUserCache(dni?: string, userId?: string): Promise<void> {
+    try {
+      const operations = [];
+      
+      if (dni) {
+        operations.push(this.redisService.delete(CACHE_KEYS.AUTH.USER_LOGIN(dni)));
+      }
+      
+      if (userId) {
+        operations.push(this.redisService.delete(CACHE_KEYS.AUTH.USER_EMPRESAS(userId)));
+      }
+      
+      // Invalidar patrón de empresas enriquecidas
+      operations.push(this.redisService.delete(CACHE_KEYS.AUTH.PATTERN));
+      
+      await Promise.allSettled(operations);
+      
+      this.logger.debug(`Caché invalidado para usuario: ${dni || userId}`);
+    } catch (error) {
+      this.logger.error('Error invalidando caché de usuario:', error);
+    }
+  }
+
+  // Función auxiliar para crear hash de IDs
+  private hashIds(ids: string[]): string {
+  return createHash('md5')
+    .update(ids.sort().join(','))
+    .digest('hex')
+    .substring(0, 16);
+}
+
+// private isValidUUID(uuid: string): boolean {
+//   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+//   return uuidRegex.test(uuid);
+// }
+
+// private createFallbackEmpresas(empresasAuth: EmpresaAuth[]): EmpresaEnriquecida[] {
+//   return empresasAuth.map(empresaAuth => ({
+//     id: empresaAuth.id,
+//     razonSocial: null,
+//     ruc: null,
+//     estado: 'ACTIVO',
+//     rubro: null,
+//     roles: empresaAuth.roles,
+//     principalRole: empresaAuth.principalRole,
+//     permissions: empresaAuth.permissions || [],
+//   }));
+// }
 
   
 
@@ -328,6 +683,12 @@ async logout(authHeader: string) {
     );
 
     this.logger.debug('Logout exitoso');
+
+    // ✅ AGREGAR: Invalidar caché después del logout
+    const claims = this.decodeJWTPayload(authHeader.replace('Bearer ', ''));
+    if (claims?.dni) {
+      await this.invalidateUserCache(claims.dni, claims.userId);
+    }
     
     return {
       success: true,
@@ -404,5 +765,218 @@ async logoutAll(authHeader: string) {
     );
   }
 }
+
+/*
+  ***************************************************************************************
+  Metodo: selectEmpresa
+  Descripcion: Permite a un usuario seleccionar una empresa específica después de iniciar sesión.
+  Esto es útil para usuarios que tienen acceso a múltiples empresas y necesitan cambiar su contexto.
+  Fecha: 17-09-2025
+  Autor: James Torres
+  ***************************************************************************************
+*/
+
+async selectEmpresa(empresaId: string, authHeader: string) {
+  try {
+    this.logger.debug(`Procesando selección de empresa: ${empresaId}`);
+    
+    // Validar formato del header
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new HttpException('Formato de Authorization header inválido', HttpStatus.BAD_REQUEST);
+    }
+    
+    // Preparar el payload para el microservicio
+    const selectEmpresaDto = { empresaId: empresaId };
+    
+    // Hacer petición al microservicio de autenticación
+    const response = await axios.post(
+      `${this.authServiceUrl}/api/auth/select-empresa`, 
+      selectEmpresaDto,
+      {
+        headers: {
+          'Authorization': authHeader,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      }
+    );
+
+    // ✅ AGREGAR: Invalidar caché después de cambiar empresa
+    const claims = this.decodeJWTPayload(authHeader.replace('Bearer ', ''));
+    if (claims?.dni) {
+      await this.invalidateUserCache(claims.dni, claims.userId);
+    }
+    
+    // ✅ SIMPLIFICAR: El microservicio ya retorna todo correctamente
+    // No necesitamos mapear ni procesar nada, solo retornar la respuesta
+    return response.data;
+    
+  } catch (error) {
+    this.logger.error(`Error al seleccionar empresa: ${error.message}`, error.stack);
+    
+    if (error.response) {
+      const statusCode = error.response.status;
+      const errorMessage = error.response.data?.error || error.response.data?.message || 'Error al seleccionar empresa';
+      
+      switch (statusCode) {
+        case 400:
+          throw new HttpException(errorMessage, HttpStatus.BAD_REQUEST);
+        case 401:
+          throw new HttpException('Token inválido o expirado', HttpStatus.UNAUTHORIZED);
+        case 403:
+          throw new HttpException('No tienes acceso a esta empresa', HttpStatus.FORBIDDEN);
+        case 404:
+          throw new HttpException('Empresa no encontrada', HttpStatus.NOT_FOUND);
+        default:
+          throw new HttpException(errorMessage, statusCode);
+      }
+    }
+    
+    if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+      throw new HttpException('El servicio de autenticación no está respondiendo', HttpStatus.GATEWAY_TIMEOUT);
+    }
+    
+    throw new HttpException('Error interno del servidor', HttpStatus.INTERNAL_SERVER_ERROR);
+  }
+}
+
+// Método auxiliar para extraer nombres de roles
+// public extractRoleNames(roles: any[]): string[] {
+//   if (!roles || !Array.isArray(roles)) return [];
+  
+//   return roles.map(role => {
+//     if (typeof role === 'string') return role;
+//     if (typeof role === 'object' && role.name) return role.name;
+//     return 'UNKNOWN_ROLE';
+//   });
+// }
+
+// // Método auxiliar para determinar rol principal
+// public determinePrincipalRole(roles: any[]): string {
+//   if (!roles || !Array.isArray(roles) || roles.length === 0) return 'USER';
+  
+//   const roleNames = this.extractRoleNames(roles);
+  
+//   // Jerarquía de roles (del más alto al más bajo)
+//   const hierarchy = ['SUPER_ADMIN', 'EMPRESA_ADMIN', 'ADMIN_USERS', 'EMPLEADO', 'CLIENTE'];
+  
+//   for (const hierarchyRole of hierarchy) {
+//     if (roleNames.includes(hierarchyRole)) {
+//       return hierarchyRole;
+//     }
+//   }
+  
+//   // Si no encuentra un rol conocido, retornar el primero
+//   return roleNames[0] || 'USER';
+// }
+// Método auxiliar para obtener empresas del usuario con información enriquecida
+async getUserEmpresasEnriquecidas(authHeader: string) {
+  try {
+    this.logger.debug('Obteniendo empresas enriquecidas del usuario');
+    
+    // Validar formato del header
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new HttpException('Formato de Authorization header inválido', HttpStatus.BAD_REQUEST);
+    }
+    
+    // Obtener empresas con roles del microservicio de auth
+    const authResponse = await axios.get(
+      `${this.authServiceUrl}/api/auth/users/me/empresas-optimized`,
+      {
+        headers: {
+          'Authorization': authHeader,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      }
+    );
+    
+    const empresasAuth: EmpresaAuth[] = authResponse.data.data;
+    
+    if (!empresasAuth || empresasAuth.length === 0) {
+      return {
+        success: true,
+        data: [],
+        message: 'No se encontraron empresas para este usuario'
+      };
+    }
+    
+    // Obtener detalles adicionales de las empresas desde el microservicio de empresas
+    try {
+      const empresasIds = empresasAuth.map(emp => emp.id);
+      
+      const empresasDetailsResponse = await firstValueFrom(
+        this.companiesClient.send('empresas.by.ids', { empresasIds })
+          .pipe(
+            timeout(8000),
+            catchError(err => {
+              this.logger.warn('Error obteniendo detalles de empresas, usando datos básicos', err.message);
+              return of({ data: [] }); // Retornar array vacío en caso de error
+            })
+          )
+      );
+      
+      const empresasDetails: EmpresaDetail[] = empresasDetailsResponse.data || [];
+      
+      // Combinar información de auth con detalles de empresa
+      const empresasEnriquecidas: EmpresaEnriquecida[] = empresasAuth.map(empresaAuth => {
+        const empresaDetail = empresasDetails.find(detail => detail.id === empresaAuth.id);
+        
+        return {
+          id: empresaAuth.id,
+          razonSocial: empresaDetail?.razonSocial || null,
+          ruc: empresaDetail?.ruc || null,
+          estado: empresaDetail?.estado || 'ACTIVO',
+          rubro: empresaDetail?.rubro || null,
+          roles: empresaAuth.roles,
+          principalRole: empresaAuth.principalRole,
+          permissions: empresaAuth.permissions
+        };
+      });
+      
+      return {
+        success: true,
+        data: empresasEnriquecidas
+      };
+      
+    } catch (empresasError) {
+      this.logger.error('Error obteniendo detalles de empresas, usando fallback', empresasError.message);
+      return this.createFallbackEmpresas(empresasAuth);
+    }
+    
+  } catch (error) {
+    this.logger.error(`Error al obtener empresas enriquecidas: ${error.message}`, error.stack);
+    
+    if (error.response) {
+      const statusCode = error.response.status;
+      const errorMessage = error.response.data?.error || 'Error al obtener empresas del usuario';
+      throw new HttpException(errorMessage, statusCode);
+    }
+    
+    throw new HttpException('Error interno del servidor', HttpStatus.INTERNAL_SERVER_ERROR);
+  }
+}
+
+// private createFallbackEmpresas(empresasAuth: EmpresaAuth[]): { success: boolean; data: EmpresaEnriquecida[] } {
+//   this.logger.debug('Creando empresas con datos mínimos (fallback)');
+  
+//   const empresasFallback: EmpresaEnriquecida[] = empresasAuth.map(empresaAuth => ({
+//     id: empresaAuth.id,
+//     razonSocial: null,
+//     ruc: null,
+//     estado: 'ACTIVO',
+//     rubro: null,
+//     roles: empresaAuth.roles,
+//     principalRole: empresaAuth.principalRole,
+//     permissions: empresaAuth.permissions
+//   }));
+  
+//   return {
+//     success: true,
+//     data: empresasFallback
+//   };
+
+// }
+
 
 }

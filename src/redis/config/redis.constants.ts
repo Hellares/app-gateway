@@ -73,7 +73,19 @@ export const REDIS_GATEWAY_CONFIG = {
     TIMEOUT: 3000,        // 1 segundo de timeout para health check
     MAX_CONSECUTIVE_FAILURES: 3  // Número de fallos antes de considerar servicio caído
   },
+  
 } as const;
+
+export const REDIS_AUTH_CONFIG = {
+  LOGIN: {
+    TTL: REDIS_GATEWAY_CONFIG.TTL.SHORT, // 600 segundos (10 minutos)
+    REFRESH_THRESHOLD: 120, // Refrescar cuando queden menos de 2 minutos
+  },
+  EMPRESAS: {
+    TTL: REDIS_GATEWAY_CONFIG.TTL.MEDIUM, // 3600 segundos (1 hora)
+    REFRESH_THRESHOLD: 300, // Refrescar cuando queden menos de 5 minutos
+  }
+};
 
 // Estados de conexión con el microservicio
 export enum REDIS_SERVICE_STATE {

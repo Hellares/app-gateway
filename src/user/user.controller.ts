@@ -1,7 +1,7 @@
 // En user.controller.ts
 import { Body, Controller, Get, Post, Put, Delete, Param, Query, Req, UseGuards, HttpStatus, Inject, Logger } from '@nestjs/common';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
-import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+// import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { catchError, firstValueFrom, timeout, TimeoutError } from 'rxjs';
 import axios from 'axios';
 import { envs } from 'src/config';
@@ -21,7 +21,7 @@ export class UserController {
 
   // Obtener roles del usuario actual (con opción de filtrar por empresa)
   @Get('/me/roles')
-  @UseGuards(JwtAuthGuard)
+  // @UseGuards(JwtAuthGuard)
   async getCurrentUserRoles(@Req() req, @Query('empresaId') empresaId?: string) {
     try {
       const userData = req.user;
@@ -53,7 +53,7 @@ export class UserController {
 
   // Obtener permisos del usuario actual
   @Get('/me/all-permissions')
-  @UseGuards(JwtAuthGuard)
+  // @UseGuards(JwtAuthGuard)
   async getCurrentUserAllPermissions(@Req() req, @Query('empresaId') empresaId: string) {
     try {
       const userData = req.user;
@@ -89,7 +89,7 @@ export class UserController {
 
   // Obtener permisos de un usuario específico (con opción de filtrar por empresa)
   @Get('/:userId/all-permissions')
-  @UseGuards(JwtAuthGuard)
+  // @UseGuards(JwtAuthGuard)
   async getUserAllPermissions(
     @Param('userId') userId: string, 
     @Query('empresaId') empresaId: string,
@@ -251,7 +251,7 @@ export class UserController {
 // }
 
 @Get('/me/empresas')
-@UseGuards(JwtAuthGuard)
+// @UseGuards(JwtAuthGuard)
 async getCurrentUserEmpresas(@Req() req): Promise<ResponseDto> {
   // const startTime = Date.now();
   
@@ -419,7 +419,7 @@ async getCurrentUserEmpresas(@Req() req): Promise<ResponseDto> {
 
 
   @Get('/search') //! Endpoint para buscar usuarios por identificador (DNI, email o teléfono)
-@UseGuards(JwtAuthGuard)
+// @UseGuards(JwtAuthGuard)
 async searchUser(@Query('identifier') identifier: string, @Req() req) {
   try {
     const token = req.headers.authorization.split(' ')[1];
@@ -448,7 +448,7 @@ async searchUser(@Query('identifier') identifier: string, @Req() req) {
 
 // Añadir un usuario existente como cliente a una empresa
 @Post('/:userId/empresas/:empresaId/add-as-client')
-@UseGuards(JwtAuthGuard)
+// @UseGuards(JwtAuthGuard)
 async addUserAsClient(
   @Param('userId') userId: string,
   @Param('empresaId') empresaId: string,
@@ -482,7 +482,7 @@ async addUserAsClient(
 
 // Endpoint para registrar un nuevo cliente y añadirlo a una empresa en un solo paso
 @Post('/register-client/:empresaId')
-@UseGuards(JwtAuthGuard)
+// @UseGuards(JwtAuthGuard)
 async registerClientForEmpresa(
   @Param('empresaId') empresaId: string,
   @Body() createClientDto: RegisterUserDto,
@@ -573,7 +573,7 @@ private generateTemporaryPassword(): string {
   
   // Listar usuarios de una empresa
   @Get('/empresa/:empresaId')
-@UseGuards(JwtAuthGuard)
+// @UseGuards(JwtAuthGuard)
 async listUsersForEmpresa(
   @Param('empresaId') empresaId: string, 
   @Query('page') page = '1', 
@@ -655,7 +655,7 @@ async listUsersForEmpresa(
 
 // Listar todos los usuarios (solo para SUPER_ADMIN)
 @Get('/all') 
-@UseGuards(JwtAuthGuard)
+// @UseGuards(JwtAuthGuard)
 async listAllUsers(
   @Query('page') page = '1',
   @Query('limit') limit = '10',
@@ -717,7 +717,7 @@ async listAllUsers(
 
 // Listar usuarios por empresa (accesible para SUPER_ADMIN y usuarios con permisos en esa empresa)
 @Get('/empresa/:empresaId/all')
-@UseGuards(JwtAuthGuard)
+// @UseGuards(JwtAuthGuard)
 async listAllUsersInEmpresa(
   @Param('empresaId') empresaId: string,
   @Query('page') page = '1',

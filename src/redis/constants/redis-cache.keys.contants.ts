@@ -70,6 +70,13 @@ export const REDIS_ENTITIES = {
 };
 
 export const CACHE_KEYS = {
+  AUTH: {
+    USER_EMPRESAS: (userId: string) => `user:empresas:${userId}`,
+    USER_LOGIN: (dni: string) => `user:login:${dni}`,
+    EMPRESAS_ENRICHED: (hash: string) => `auth:empresas:enriched:${hash}`,
+    PATTERN: 'auth:*',
+  },
+
   RUBRO: {
     // Keys base que pueden ser usadas directamente
     BASE: {
