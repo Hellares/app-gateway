@@ -1,64 +1,3 @@
-// import { Module } from '@nestjs/common';
-// import { ClientsModule, RmqOptions, Transport } from '@nestjs/microservices';
-// import {  envs } from 'src/config';
-// import { QUEUES, SERVICES } from './constants';
-
-// const serviceConfig = [
-//   { name: SERVICES.COMPANY,queue: QUEUES.COMPANY },
-//   { name: SERVICES.REDIS,queue: QUEUES.REDIS },
-//   { name: SERVICES.FILES,queue: QUEUES.FILES },
-//   { name: SERVICES.IMAGE_PROCESSOR, queue: QUEUES.IMAGES_TO_PROCESS },
-// ];
-
-// const clientsConfigArray = serviceConfig.map(service => ({
-//   name: service.name,
-//   transport: Transport.RMQ,
-//   options: {
-//     urls: envs.rabbitmqServers,
-//     queue: service.queue,
-//     queueOptions: {
-//       durable: true,
-//       arguments: {
-//         'x-message-ttl': 300000, // 5 minutos
-//         'x-expires': 600000      // 10 minutos
-//       }
-//     },
-//     noAssert: false,
-//     persistent: true,
-//     heartbeat: 120,
-//     socketOptions: {
-//       heartbeatIntervalInSeconds: 120,
-//         timeout: 10000,         // 10 segundos de timeout
-//     },
-//   }
-// } as RmqOptions & { name: string; }));
-
-// // Configuración específica para la cola de resultados
-// const processedImagesConfig = {
-//   name: 'PROCESSED_IMAGES_CONSUMER',
-//   transport: Transport.RMQ,
-//   options: {
-//     urls: envs.rabbitmqServers,
-//     queue: QUEUES.PROCESSED_IMAGES,
-//     queueOptions: {
-//       durable: true
-//     },
-//     noAck: false, // Importante: requiere confirmación manual
-//   }
-// };
-
-// clientsConfigArray.push(processedImagesConfig as any);
-
-
-// const clientsConfig = ClientsModule.register(clientsConfigArray);
-
-// @Module({
-//   imports: [clientsConfig],
-//   exports: [clientsConfig]
-// })
-// export class RabbitMQModule { }
-
-
 import { Module } from '@nestjs/common';
 import { ClientsModule, RmqOptions, Transport } from '@nestjs/microservices';
 import { envs } from 'src/config';
@@ -109,16 +48,23 @@ const standardClientsConfigArray = standardServiceConfig.map(service => ({
       durable: true,
       arguments: {
         'x-message-ttl': 300000, // 5 minutos
-        'x-expires': 600000      // 10 minutos
+        'x-expires': 600000,      // 10 minutos
       }
     },
     noAssert: false,
     persistent: true,
-    heartbeat: 120,
+    heartbeat: 60,
     socketOptions: {
-      heartbeatIntervalInSeconds: 120,
-      timeout: 10000,
+      heartbeatIntervalInSeconds: 60,
+      timeout: 8000,
+      keepAlive: true,
+      keepAliveDelay: 60000,
     },
+    connectionInitOptions: {
+      wait: false,
+      reject: false,
+      timeout: 5000,
+    }
   }
 } as RmqOptions & { name: string; }));
 

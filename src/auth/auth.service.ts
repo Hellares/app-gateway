@@ -27,14 +27,23 @@ export class AuthService {
   ) {}
 
   // ✅ AGREGAR: Método ligero de validación que solo decodifica JWT
+  // validateTokenLight(token: string): any {
+  //   try {
+  //     return this.decodeJWTPayload(token);
+  //   } catch (error) {
+  //     this.logger.debug(`Token ligero inválido: ${error.message}`);
+  //     return null;
+  //   }
+  // }
+
   validateTokenLight(token: string): any {
-    try {
-      return this.decodeJWTPayload(token);
-    } catch (error) {
-      this.logger.debug(`Token ligero inválido: ${error.message}`);
-      return null;
-    }
+  try {
+    return this.decodeJWTPayload(token);
+  } catch (error) {
+    // No hacer log de cada error para reducir overhead
+    return null;
   }
+}
 
   // ✅ AGREGAR: Decodificación local de JWT sin llamar al microservicio
   private decodeJWTPayload(token: string): any {
@@ -347,7 +356,7 @@ private async enrichEmpresasWithDetails(empresasAuth: EmpresaAuth[]): Promise<Em
 
   try {
     // Paralelización con lotes
-    const batchSize = 10; // Procesar de 10 en 10
+    const batchSize = 5; // Procesar de 10 en 10
     const batches = [];
     
     for (let i = 0; i < empresasIds.length; i += batchSize) {
@@ -360,7 +369,7 @@ private async enrichEmpresasWithDetails(empresasAuth: EmpresaAuth[]): Promise<Em
     const batchPromises = batches.map((batch, index) => 
       firstValueFrom(
         this.companiesClient.send('empresas.by.ids', { empresasIds: batch }).pipe(
-          timeout(5000), // Timeout por lote
+          timeout(4000), // Timeout por lote
           catchError(err => {
             this.logger.warn(`Error en lote ${index + 1}: ${err.message}`);
             return of({ data: [] }); // Retornar array vacío en caso de error
@@ -439,7 +448,7 @@ private async refreshEmpresasCache(empresasAuth: EmpresaAuth[], cacheKey: string
       .filter(id => id && typeof id === 'string');
 
     // Paralelización también en el refresh
-    const batchSize = 10;
+    const batchSize = 5;
     const batches = [];
     
     for (let i = 0; i < empresasIds.length; i += batchSize) {
@@ -658,6 +667,8 @@ private createFallbackEmpresas(empresasAuth: EmpresaAuth[]): EmpresaEnriquecida[
       return null;
     }
   }
+
+  
 
 async logout(authHeader: string) {
   try {
