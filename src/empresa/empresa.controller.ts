@@ -12,6 +12,7 @@ import { REDIS_GATEWAY_CONFIG } from 'src/redis/config/redis.constants';
 // import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import axios from 'axios';
 import { envs } from 'src/config';
+import { HybridAuthGuard } from 'src/auth/guards/hybrid-auth.guard';
 
 @Controller('empresa')
 export class EmpresaController {
@@ -43,11 +44,12 @@ export class EmpresaController {
   // }
 
   @Post()
-  // @UseGuards(JwtAuthGuard) // Proteger con autenticación
+  @UseGuards(HybridAuthGuard) // Proteger con autenticación
   async create(@Body() createCompanyDto: CreateEmpresaDto, @Req() req) {
     try {
       // Obtener datos del usuario autenticado
       const userData = req.user;
+      console.log(userData);
       
       this.logger.debug(`Solicitud de creación de empresa recibida: ${createCompanyDto.nombreComercial} por usuario: ${userData.dni}`);
       
